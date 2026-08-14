@@ -1,0 +1,6 @@
+{
+  "name": "Sistem Pendaftaran Pelawat Sekolah",
+  "description": "Papan pemuka pendaftaran masuk dan keluar pelawat untuk kegunaan di pondok pengawal sekolah.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
