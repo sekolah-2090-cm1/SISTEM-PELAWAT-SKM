@@ -13,19 +13,63 @@ export function setGoogleSheetApiUrl(url: string): void {
 }
 
 /**
+ * Helper to validate if the URL looks like a valid Google Apps Script Web App exec URL
+ */
+export function isValidGoogleAppsScriptUrl(url: string): { valid: boolean; reason?: string } {
+  if (!url || !url.trim()) {
+    return { valid: false, reason: 'URL kosong.' };
+  }
+
+  const trimmed = url.trim();
+  if (trimmed.includes('docs.google.com/spreadsheets')) {
+    return {
+      valid: false,
+      reason: 'Ini adalah URL Google Sheets, bukan Web App URL. Sila guna Web App URL dari Extensions > Apps Script > Deploy > Web app (bermula dengan https://script.google.com/macros/s/.../exec).'
+    };
+  }
+
+  if (trimmed.includes('/edit') && trimmed.includes('script.google.com')) {
+    return {
+      valid: false,
+      reason: 'Ini adalah pautan editor Apps Script. Sila klik "Deploy" > "New deployment" > "Web app" untuk mendapatkan URL /exec.'
+    };
+  }
+
+  if (!trimmed.startsWith('https://script.google.com/macros/s/')) {
+    return {
+      valid: false,
+      reason: 'URL mesti bermula dengan https://script.google.com/macros/s/...'
+    };
+  }
+
+  return { valid: true };
+}
+
+/**
  * Fetch all visitors from Google Sheets
  */
 export async function fetchVisitorsFromSheet(): Promise<Visitor[] | null> {
   const apiUrl = getGoogleSheetApiUrl();
   if (!apiUrl) return null;
 
+  const validation = isValidGoogleAppsScriptUrl(apiUrl);
+  if (!validation.valid) {
+    console.warn('Google Sheet URL validation notice:', validation.reason);
+    return null;
+  }
+
   try {
     const res = await fetch(apiUrl, {
       method: 'GET',
+      redirect: 'follow',
+      headers: {
+        'Accept': 'application/json',
+      },
     });
 
     if (!res.ok) {
-      throw new Error(`HTTP error! status: ${res.status}`);
+      console.warn(`Google Sheet request returned status ${res.status}`);
+      return null;
     }
 
     const data = await res.json();
@@ -44,7 +88,8 @@ export async function fetchVisitorsFromSheet(): Promise<Visitor[] | null> {
     }
     return null;
   } catch (error) {
-    console.error('Error fetching visitors from Google Sheets:', error);
+    // Graceful fallback without throwing noisy uncaught exceptions
+    console.warn('Gagal memuat turun data dari Google Sheets. Menggunakan storan tempatan:', error);
     return null;
   }
 }
@@ -56,10 +101,13 @@ export async function addVisitorToSheet(visitor: Visitor): Promise<boolean> {
   const apiUrl = getGoogleSheetApiUrl();
   if (!apiUrl) return false;
 
+  const validation = isValidGoogleAppsScriptUrl(apiUrl);
+  if (!validation.valid) return false;
+
   try {
     await fetch(apiUrl, {
       method: 'POST',
-      // Using text/plain prevents CORS preflight triggers for Google Apps Script Web App
+      mode: 'no-cors', // Use no-cors for Google Apps Script Web App redirection compatibility
       headers: {
         'Content-Type': 'text/plain;charset=utf-8',
       },
@@ -70,7 +118,7 @@ export async function addVisitorToSheet(visitor: Visitor): Promise<boolean> {
     });
     return true;
   } catch (error) {
-    console.error('Error syncing visitor to Google Sheets:', error);
+    console.warn('Gagal menambah data ke Google Sheets:', error);
     return false;
   }
 }
@@ -82,9 +130,13 @@ export async function checkOutVisitorInSheet(id: string, checkOutTime: string): 
   const apiUrl = getGoogleSheetApiUrl();
   if (!apiUrl) return false;
 
+  const validation = isValidGoogleAppsScriptUrl(apiUrl);
+  if (!validation.valid) return false;
+
   try {
     await fetch(apiUrl, {
       method: 'POST',
+      mode: 'no-cors',
       headers: {
         'Content-Type': 'text/plain;charset=utf-8',
       },
@@ -96,7 +148,8 @@ export async function checkOutVisitorInSheet(id: string, checkOutTime: string): 
     });
     return true;
   } catch (error) {
-    console.error('Error updating check out in Google Sheets:', error);
+    console.warn('Gagal mengemaskini daftar keluar ke Google Sheets:', error);
     return false;
   }
 }
+

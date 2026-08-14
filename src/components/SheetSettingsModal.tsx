@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { X, Table, Check, ExternalLink, RefreshCw, AlertTriangle, ShieldCheck } from 'lucide-react';
-import { getGoogleSheetApiUrl, setGoogleSheetApiUrl, fetchVisitorsFromSheet } from '../services/sheetsService';
+import { X, Table, Check, ExternalLink, RefreshCw, AlertTriangle, ShieldCheck, Info } from 'lucide-react';
+import { getGoogleSheetApiUrl, setGoogleSheetApiUrl, fetchVisitorsFromSheet, isValidGoogleAppsScriptUrl } from '../services/sheetsService';
 
 interface SheetSettingsModalProps {
   isOpen: boolean;
@@ -16,6 +16,13 @@ export default function SheetSettingsModal({ isOpen, onClose, onSyncComplete }: 
   if (!isOpen) return null;
 
   const handleSave = () => {
+    if (url.trim()) {
+      const validation = isValidGoogleAppsScriptUrl(url);
+      if (!validation.valid) {
+        setTestResult({ success: false, message: validation.reason || 'Format URL tidak sah.' });
+        return;
+      }
+    }
     setGoogleSheetApiUrl(url);
     setTestResult({ success: true, message: 'URL berjaya disimpan!' });
     if (onSyncComplete) onSyncComplete();
@@ -24,6 +31,12 @@ export default function SheetSettingsModal({ isOpen, onClose, onSyncComplete }: 
   const handleTestConnection = async () => {
     if (!url.trim()) {
       setTestResult({ success: false, message: 'Sila masukkan Web App URL Google Apps Script terlebih dahulu.' });
+      return;
+    }
+
+    const validation = isValidGoogleAppsScriptUrl(url);
+    if (!validation.valid) {
+      setTestResult({ success: false, message: validation.reason || 'Format URL tidak sah.' });
       return;
     }
 
@@ -45,7 +58,7 @@ export default function SheetSettingsModal({ isOpen, onClose, onSyncComplete }: 
     } else {
       setTestResult({
         success: false,
-        message: 'Gagal menyambung. Sila pastikan Web App telah di-deploy dengan akses "Anyone (Sesiapa sahaja)".'
+        message: 'Gagal menyambung (Failed to fetch). Sila pastikan Web App telah di-deploy dengan tetapan "Who has access: Anyone" (bukan "Only myself" atau terhad kepada organisasi).'
       });
     }
   };
@@ -97,7 +110,7 @@ export default function SheetSettingsModal({ isOpen, onClose, onSyncComplete }: 
               className="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl text-sm font-mono text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all shadow-inner"
             />
             <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">
-              Anda juga boleh menetapkan pembolehubah <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-700 font-mono text-[10px]">VITE_GOOGLE_SHEET_API_URL</code> di Vercel Environment Variables.
+              Format URL wajib bermula dengan <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700 font-mono text-[10px]">https://script.google.com/macros/s/.../exec</code>
             </p>
           </div>
 
@@ -113,18 +126,22 @@ export default function SheetSettingsModal({ isOpen, onClose, onSyncComplete }: 
               ) : (
                 <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
               )}
-              <div className="font-medium">{testResult.message}</div>
+              <div className="font-medium leading-relaxed">{testResult.message}</div>
             </div>
           )}
 
           {/* Setup Guide Summary */}
           <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/80 text-xs space-y-2 text-slate-600">
-            <div className="font-bold text-slate-800">Langkah Ringkas di Google Sheets:</div>
-            <ol className="list-decimal list-inside space-y-1 text-slate-600 text-[11px]">
-              <li>Buka Google Sheets &gt; <strong>Extensions &gt; Apps Script</strong>.</li>
-              <li>Tampal kod Google Apps Script yang disediakan.</li>
-              <li>Klik <strong>Deploy &gt; New deployment &gt; Web app</strong>.</li>
-              <li>Pilih <em>Who has access: <strong>Anyone</strong></em> lalu salin Web App URL ke ruangan di atas.</li>
+            <div className="font-bold text-slate-800 flex items-center gap-1.5">
+              <Info className="w-4 h-4 text-blue-600" />
+              Cara Betul Deploy di Google Sheets (Elak Ralat Fetch):
+            </div>
+            <ol className="list-decimal list-inside space-y-1.5 text-slate-600 text-[11px]">
+              <li>Di Google Sheet anda, klik <strong>Extensions &gt; Apps Script</strong>.</li>
+              <li>Klik butang biru <strong>Deploy &gt; New deployment</strong>.</li>
+              <li>Pilih jenis <strong>Web app</strong> (ikon gear).</li>
+              <li><strong>PENTING:</strong> Di bahagian <em>Who has access</em>, pilih <strong>Anyone</strong> (Sesiapa sahaja).</li>
+              <li>Klik <strong>Deploy</strong>, benarkan akses, dan salin URL Web App yang berakhir dengan <code className="font-mono bg-slate-200 px-1 rounded">/exec</code>.</li>
             </ol>
           </div>
         </div>
@@ -153,7 +170,9 @@ export default function SheetSettingsModal({ isOpen, onClose, onSyncComplete }: 
               type="button"
               onClick={() => {
                 handleSave();
-                onClose();
+                if (isValidGoogleAppsScriptUrl(url).valid || !url.trim()) {
+                  onClose();
+                }
               }}
               className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-700/20"
             >
@@ -167,3 +186,4 @@ export default function SheetSettingsModal({ isOpen, onClose, onSyncComplete }: 
     </div>
   );
 }
+
