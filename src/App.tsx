@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Users, Search, Clock as ClockIcon, Activity, Download, ClipboardList, BarChart3, UserPlus, Table, RefreshCw, Lock, Printer, FileText } from 'lucide-react';
+import { ShieldCheck, Users, Search, Clock as ClockIcon, Activity, Download, ClipboardList, BarChart3, UserPlus, Table, RefreshCw, Lock, Printer, FileText, QrCode, Camera } from 'lucide-react';
 import { Visitor } from './types';
 import VisitorForm from './components/VisitorForm';
 import VisitorList from './components/VisitorList';
@@ -7,12 +7,39 @@ import VisitorDetailModal from './components/VisitorDetailModal';
 import VisitorAnalyticsChart from './components/VisitorAnalyticsChart';
 import AdminModal from './components/AdminModal';
 import ReportPrintView, { ReportConfig } from './components/ReportPrintView';
+import QRScannerModal from './components/QRScannerModal';
+import VisitorPassModal from './components/VisitorPassModal';
 import { 
   getGoogleSheetApiUrl, 
   fetchVisitorsFromSheet, 
   addVisitorToSheet, 
   checkOutVisitorInSheet 
 } from './services/sheetsService';
+
+// Helper to guarantee unique IDs across any visitor list
+function sanitizeVisitorsList(list: any[]): Visitor[] {
+  if (!Array.isArray(list)) return [];
+  const seenIds = new Set<string>();
+  return list.map((item: any, index: number) => {
+    let rawId = item?.id ? String(item.id).trim() : '';
+    if (!rawId || seenIds.has(rawId)) {
+      rawId = rawId ? `${rawId}_${index}_${crypto.randomUUID().slice(0, 4)}` : crypto.randomUUID();
+    }
+    seenIds.add(rawId);
+
+    return {
+      id: rawId,
+      name: String(item?.name || ''),
+      icOrPassport: String(item?.icOrPassport || ''),
+      phone: String(item?.phone || ''),
+      vehiclePlate: String(item?.vehiclePlate || ''),
+      purpose: String(item?.purpose || ''),
+      checkInTime: String(item?.checkInTime || new Date().toISOString()),
+      checkOutTime: item?.checkOutTime ? String(item.checkOutTime) : null,
+      status: item?.status === 'CHECKED_OUT' ? 'CHECKED_OUT' : 'ACTIVE',
+    };
+  });
+}
 
 export default function App() {
   const [visitors, setVisitors] = useState<Visitor[]>([]);
@@ -24,6 +51,11 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [hasSheetConfig, setHasSheetConfig] = useState(false);
   const [activeReportConfig, setActiveReportConfig] = useState<ReportConfig | null>(null);
+  
+  // QR Scanner & Visitor Pass Modals
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [passVisitor, setPassVisitor] = useState<Visitor | null>(null);
+  const [isPassModalOpen, setIsPassModalOpen] = useState(false);
 
   // Check sheet configuration and load data
   const syncWithCloud = async () => {
@@ -36,8 +68,9 @@ export default function App() {
     setIsSyncing(false);
 
     if (cloudVisitors && cloudVisitors.length > 0) {
-      setVisitors(cloudVisitors);
-      localStorage.setItem('school_visitors', JSON.stringify(cloudVisitors));
+      const sanitized = sanitizeVisitorsList(cloudVisitors);
+      setVisitors(sanitized);
+      localStorage.setItem('school_visitors', JSON.stringify(sanitized));
     }
   };
 
@@ -46,7 +79,8 @@ export default function App() {
     const saved = localStorage.getItem('school_visitors');
     if (saved) {
       try {
-        setVisitors(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        setVisitors(sanitizeVisitorsList(parsed));
       } catch (e) {
         console.error('Failed to parse visitors from local storage');
       }
@@ -79,6 +113,10 @@ export default function App() {
     setVisitors((prev) => [newVisitor, ...prev]);
     setActiveTab('senarai');
 
+    // Automatically prompt Visitor Pass with QR Code
+    setPassVisitor(newVisitor);
+    setIsPassModalOpen(true);
+
     // Async sync to Google Sheets
     if (getGoogleSheetApiUrl()) {
       setIsSyncing(true);
@@ -105,6 +143,11 @@ export default function App() {
       await checkOutVisitorInSheet(id, checkOutTime);
       setIsSyncing(false);
     }
+  };
+
+  const handleShowPass = (visitor: Visitor) => {
+    setPassVisitor(visitor);
+    setIsPassModalOpen(true);
   };
 
   // Compute stats
@@ -200,6 +243,19 @@ export default function App() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+            {/* Quick QR Scanner Button for Security Guard */}
+            <button
+              onClick={() => setIsScannerOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl shadow-md shadow-blue-500/20 transition-all hover:scale-[1.02] border border-blue-400/30"
+              title="Buka Pengimbas Kod QR untuk Daftar Keluar Pantas"
+            >
+              <Camera className="w-4 h-4 text-blue-200" />
+              <span>Imbas Pas QR</span>
+              <span className="px-1.5 py-0.5 bg-blue-400/30 text-white text-[10px] rounded-md uppercase font-black tracking-wider">
+                Kamera
+              </span>
+            </button>
+
             {/* Admin Hub Button (Contains Google Sheets & PDF Generator) */}
             <button
               onClick={() => setIsAdminOpen(true)}
@@ -313,6 +369,13 @@ export default function App() {
                   </h2>
                   <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
                     <button
+                      onClick={() => setIsScannerOpen(true)}
+                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl shadow-md shadow-blue-600/20 transition-all hover:scale-[1.02]"
+                    >
+                      <Camera className="w-4 h-4" />
+                      <span>Imbas QR Keluar</span>
+                    </button>
+                    <button
                       onClick={handleExportCSV}
                       disabled={visitorsToday.length === 0}
                       className={`w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl transition-all border shadow-sm text-sm font-bold ${
@@ -344,6 +407,7 @@ export default function App() {
                     onCheckOut={handleCheckOut}
                     searchTerm={searchTerm}
                     onSelectVisitor={setSelectedVisitor}
+                    onShowPass={handleShowPass}
                   />
                 </div>
               </div>
@@ -441,6 +505,25 @@ export default function App() {
         allVisitors={visitors}
         onClose={() => setSelectedVisitor(null)}
         onCheckOut={handleCheckOut}
+        onShowPass={handleShowPass}
+      />
+
+      {/* Camera QR Code Scanner Modal */}
+      <QRScannerModal
+        isOpen={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        visitors={visitors}
+        onCheckOut={handleCheckOut}
+      />
+
+      {/* Visitor Pass (QR Code) Modal */}
+      <VisitorPassModal
+        visitor={passVisitor}
+        isOpen={isPassModalOpen}
+        onClose={() => {
+          setIsPassModalOpen(false);
+          setPassVisitor(null);
+        }}
       />
 
       {/* Admin Modal (Includes PDF Generator & Google Sheets Sync) */}

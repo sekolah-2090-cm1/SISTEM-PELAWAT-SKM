@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { X, User, Phone, CreditCard, Car, FileText, Clock, CheckCircle2, History, AlertCircle, LogOut } from 'lucide-react';
+import { X, User, Phone, CreditCard, Car, FileText, Clock, CheckCircle2, History, AlertCircle, LogOut, QrCode } from 'lucide-react';
 import { Visitor } from '../types';
 
 interface VisitorDetailModalProps {
@@ -7,9 +7,10 @@ interface VisitorDetailModalProps {
   allVisitors: Visitor[];
   onClose: () => void;
   onCheckOut: (id: string) => void;
+  onShowPass?: (visitor: Visitor) => void;
 }
 
-export default function VisitorDetailModal({ visitor, allVisitors, onClose, onCheckOut }: VisitorDetailModalProps) {
+export default function VisitorDetailModal({ visitor, allVisitors, onClose, onCheckOut, onShowPass }: VisitorDetailModalProps) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -188,7 +189,7 @@ export default function VisitorDetailModal({ visitor, allVisitors, onClose, onCh
                 <div className="p-4 text-center text-slate-400 text-sm">Tiada rekod lawatan lain.</div>
               ) : (
                 historyList.map((item, idx) => (
-                  <div key={item.id} className={`p-3.5 text-xs flex items-center justify-between gap-3 ${item.id === visitor.id ? 'bg-blue-50/50 font-medium' : 'hover:bg-slate-50/50'}`}>
+                  <div key={`${item.id}-${idx}`} className={`p-3.5 text-xs flex items-center justify-between gap-3 ${item.id === visitor.id ? 'bg-blue-50/50 font-medium' : 'hover:bg-slate-50/50'}`}>
                     <div className="flex items-center gap-3">
                       <span className="w-5 h-5 rounded-full bg-slate-200/70 text-slate-600 font-bold flex items-center justify-center text-[11px]">
                         {idx + 1}
@@ -215,10 +216,23 @@ export default function VisitorDetailModal({ visitor, allVisitors, onClose, onCh
         </div>
 
         {/* Footer */}
-        <div className="mt-6 pt-4 border-t border-slate-200/70 flex justify-end">
+        <div className="mt-6 pt-4 border-t border-slate-200/70 flex flex-wrap items-center justify-between gap-3">
+          {onShowPass && (
+            <button
+              type="button"
+              onClick={() => {
+                onShowPass(visitor);
+                onClose();
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs rounded-xl border border-blue-200 transition-all shadow-sm"
+            >
+              <QrCode className="w-4 h-4 text-blue-600" />
+              <span>Papar / Cetak Pas QR</span>
+            </button>
+          )}
           <button
             onClick={onClose}
-            className="px-6 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-sm rounded-xl transition-all shadow-sm"
+            className="px-6 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-sm rounded-xl transition-all shadow-sm ml-auto"
           >
             Tutup
           </button>

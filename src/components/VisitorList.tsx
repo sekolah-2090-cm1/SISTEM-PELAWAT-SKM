@@ -1,5 +1,5 @@
 import React from 'react';
-import { LogOut, CheckCircle2, Clock, Car } from 'lucide-react';
+import { LogOut, CheckCircle2, Clock, Car, QrCode } from 'lucide-react';
 import { Visitor } from '../types';
 
 interface VisitorListProps {
@@ -7,9 +7,10 @@ interface VisitorListProps {
   onCheckOut: (id: string) => void;
   searchTerm: string;
   onSelectVisitor?: (visitor: Visitor) => void;
+  onShowPass?: (visitor: Visitor) => void;
 }
 
-export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelectVisitor }: VisitorListProps) {
+export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelectVisitor, onShowPass }: VisitorListProps) {
   const filteredVisitors = visitors.filter(v => 
     v.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     v.icOrPassport.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -51,9 +52,9 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
                 </td>
               </tr>
             ) : (
-              filteredVisitors.map((visitor) => (
+              filteredVisitors.map((visitor, index) => (
                 <tr 
-                  key={visitor.id} 
+                  key={`${visitor.id}-${index}`} 
                   onClick={() => onSelectVisitor?.(visitor)}
                   className="hover:bg-blue-50/60 transition-colors group/row cursor-pointer"
                   title="Klik untuk lihat butiran penuh & sejarah pelawat"
@@ -96,20 +97,35 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
                     )}
                   </td>
                   <td className="px-6 py-4 text-right">
-                    {visitor.status === 'ACTIVE' ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onCheckOut(visitor.id);
-                        }}
-                        className="inline-flex items-center gap-2 px-4 py-2 bg-white hover:bg-amber-50 text-slate-700 hover:text-amber-700 font-semibold text-xs rounded-lg transition-all border border-slate-200 hover:border-amber-200 shadow-sm opacity-0 group-hover/row:opacity-100 focus:opacity-100 sm:opacity-100 hover:shadow"
-                      >
-                        <LogOut className="w-4 h-4 text-amber-500" />
-                        Daftar Keluar
-                      </button>
-                    ) : (
-                      <span className="text-slate-400 text-xs font-medium px-4">Selesai</span>
-                    )}
+                    <div className="flex items-center justify-end gap-2">
+                      {onShowPass && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onShowPass(visitor);
+                          }}
+                          className="p-2 bg-white hover:bg-blue-50 text-blue-600 rounded-lg border border-slate-200 hover:border-blue-200 shadow-sm transition-all opacity-80 group-hover/row:opacity-100"
+                          title="Papar Pas QR Pelawat"
+                        >
+                          <QrCode className="w-4 h-4" />
+                        </button>
+                      )}
+                      {visitor.status === 'ACTIVE' ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onCheckOut(visitor.id);
+                          }}
+                          className="inline-flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-amber-50 text-slate-700 hover:text-amber-700 font-semibold text-xs rounded-lg transition-all border border-slate-200 hover:border-amber-200 shadow-sm opacity-0 group-hover/row:opacity-100 focus:opacity-100 sm:opacity-100 hover:shadow"
+                        >
+                          <LogOut className="w-3.5 h-3.5 text-amber-500" />
+                          <span>Daftar Keluar</span>
+                        </button>
+                      ) : (
+                        <span className="text-slate-400 text-xs font-medium px-2">Selesai</span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))

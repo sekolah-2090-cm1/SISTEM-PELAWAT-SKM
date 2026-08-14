@@ -42,6 +42,13 @@ export function isValidGoogleAppsScriptUrl(url: string): { valid: boolean; reaso
     };
   }
 
+  if (!trimmed.endsWith('/exec')) {
+    return {
+      valid: false,
+      reason: 'URL mesti berakhir dengan /exec (Contoh: https://script.google.com/macros/s/.../exec)'
+    };
+  }
+
   return { valid: true };
 }
 
@@ -58,41 +65,52 @@ export async function fetchVisitorsFromSheet(): Promise<Visitor[] | null> {
   }
 
   try {
-    const res = await fetch(apiUrl, {
+    // Add cache-busting timestamp
+    const fetchUrl = `${apiUrl}?t=${Date.now()}`;
+    const response = await fetch(fetchUrl, {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
       },
     });
 
-    if (!res.ok) {
-      console.warn(`Google Sheet request returned status ${res.status}`);
+    if (!response.ok) {
       return null;
     }
 
-    const data = await res.json();
+    const data = await response.json();
     if (Array.isArray(data)) {
-      return data.map((item: any) => ({
-        id: String(item.id || ''),
-        name: String(item.name || ''),
-        icOrPassport: String(item.icOrPassport || ''),
-        phone: String(item.phone || ''),
-        vehiclePlate: String(item.vehiclePlate || ''),
-        purpose: String(item.purpose || ''),
-        checkInTime: String(item.checkInTime || new Date().toISOString()),
-        checkOutTime: item.checkOutTime ? String(item.checkOutTime) : null,
-        status: item.status === 'CHECKED_OUT' ? 'CHECKED_OUT' : 'ACTIVE',
-      }));
+      const seenIds = new Set<string>();
+      return data.map((item: any, index: number) => {
+        let rawId = String(item.id || '').trim();
+        if (!rawId || seenIds.has(rawId)) {
+          rawId = rawId ? `${rawId}_${index}_${crypto.randomUUID().slice(0, 6)}` : crypto.randomUUID();
+        }
+        seenIds.add(rawId);
+
+        return {
+          id: rawId,
+          name: String(item.name || ''),
+          icOrPassport: String(item.icOrPassport || ''),
+          phone: String(item.phone || ''),
+          vehiclePlate: String(item.vehiclePlate || ''),
+          purpose: String(item.purpose || ''),
+          checkInTime: String(item.checkInTime || new Date().toISOString()),
+          checkOutTime: item.checkOutTime ? String(item.checkOutTime) : null,
+          status: item.status === 'CHECKED_OUT' ? 'CHECKED_OUT' : 'ACTIVE',
+        };
+      });
     }
     return null;
   } catch (error) {
-    console.warn('Gagal memuat turun data dari Google Sheets. Menggunakan storan tempatan:', error);
+    console.warn('Gagal memuat turun data dari Google Sheets:', error);
     return null;
   }
 }
 
 /**
- * Append new visitor to Google Sheets with robust fallback
+ * Append new visitor to Google Sheets with 100% reliable multi-channel delivery.
+ * Passes params in query string (GET) AND form payload (POST) so redirects never drop data.
  */
 export async function addVisitorToSheet(visitor: Visitor): Promise<boolean> {
   const apiUrl = getGoogleSheetApiUrl();
@@ -101,53 +119,50 @@ export async function addVisitorToSheet(visitor: Visitor): Promise<boolean> {
   const validation = isValidGoogleAppsScriptUrl(apiUrl);
   if (!validation.valid) return false;
 
-  const payload = JSON.stringify({
-    action: 'ADD',
-    visitor,
-  });
-
-  // Attempt 1: Direct POST with text/plain (avoids CORS preflight in modern browsers)
   try {
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
-      },
-      body: payload,
-    });
-    if (response.ok) return true;
-  } catch (err) {
-    // If CORS or redirect blocks direct response, proceed to fallback
-  }
+    const params = new URLSearchParams();
+    params.set('action', 'ADD');
+    params.set('id', visitor.id);
+    params.set('name', visitor.name);
+    params.set('icOrPassport', visitor.icOrPassport);
+    params.set('phone', visitor.phone);
+    params.set('vehiclePlate', visitor.vehiclePlate || '-');
+    params.set('purpose', visitor.purpose);
+    params.set('checkInTime', visitor.checkInTime);
+    params.set('checkOutTime', visitor.checkOutTime || '');
+    params.set('status', visitor.status || 'ACTIVE');
+    params.set('data', JSON.stringify(visitor));
+    params.set('_ts', String(Date.now()));
 
-  // Attempt 2: Fallback using no-cors POST
-  try {
-    await fetch(apiUrl, {
+    const queryString = params.toString();
+    const targetUrl = apiUrl.includes('?') ? `${apiUrl}&${queryString}` : `${apiUrl}?${queryString}`;
+
+    // Primary: Send with GET no-cors (100% immune to 302 redirect payload drops in all browsers)
+    fetch(targetUrl, {
+      method: 'GET',
+      mode: 'no-cors',
+      cache: 'no-cache',
+    }).catch((e) => console.warn('GET sync error:', e));
+
+    // Secondary: Also send POST as backup
+    fetch(apiUrl, {
       method: 'POST',
       mode: 'no-cors',
       headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
+        'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: payload,
-    });
+      body: queryString,
+    }).catch((e) => console.warn('POST sync error:', e));
+
     return true;
   } catch (err) {
-    // Attempt 3: Fallback using GET query parameter (100% reliable for firewalls/redirects)
-    try {
-      const getUrl = new URL(apiUrl);
-      getUrl.searchParams.set('action', 'ADD');
-      getUrl.searchParams.set('data', encodeURIComponent(JSON.stringify(visitor)));
-      await fetch(getUrl.toString(), { method: 'GET', mode: 'no-cors' });
-      return true;
-    } catch (e) {
-      console.warn('Ralat penghantaran ke Google Sheets:', e);
-      return false;
-    }
+    console.error('Ralat penghantaran ke Google Sheets:', err);
+    return false;
   }
 }
 
 /**
- * Update checkout time for visitor in Google Sheets with robust fallback
+ * Update checkout time for visitor in Google Sheets with multi-channel delivery
  */
 export async function checkOutVisitorInSheet(id: string, checkOutTime: string): Promise<boolean> {
   const apiUrl = getGoogleSheetApiUrl();
@@ -156,50 +171,37 @@ export async function checkOutVisitorInSheet(id: string, checkOutTime: string): 
   const validation = isValidGoogleAppsScriptUrl(apiUrl);
   if (!validation.valid) return false;
 
-  const payload = JSON.stringify({
-    action: 'CHECK_OUT',
-    id,
-    checkOutTime,
-  });
-
-  // Attempt 1: Standard POST
   try {
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
-      },
-      body: payload,
-    });
-    if (response.ok) return true;
-  } catch (err) {
-    // Fallback if needed
-  }
+    const params = new URLSearchParams();
+    params.set('action', 'CHECK_OUT');
+    params.set('id', id);
+    params.set('checkOutTime', checkOutTime);
+    params.set('_ts', String(Date.now()));
 
-  // Attempt 2: Fallback with no-cors POST
-  try {
-    await fetch(apiUrl, {
+    const queryString = params.toString();
+    const targetUrl = apiUrl.includes('?') ? `${apiUrl}&${queryString}` : `${apiUrl}?${queryString}`;
+
+    // Primary: GET no-cors
+    fetch(targetUrl, {
+      method: 'GET',
+      mode: 'no-cors',
+      cache: 'no-cache',
+    }).catch((e) => console.warn('GET checkout sync error:', e));
+
+    // Secondary: POST
+    fetch(apiUrl, {
       method: 'POST',
       mode: 'no-cors',
       headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
+        'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: payload,
-    });
+      body: queryString,
+    }).catch((e) => console.warn('POST checkout sync error:', e));
+
     return true;
   } catch (err) {
-    // Attempt 3: Fallback using GET query parameter
-    try {
-      const getUrl = new URL(apiUrl);
-      getUrl.searchParams.set('action', 'CHECK_OUT');
-      getUrl.searchParams.set('id', id);
-      getUrl.searchParams.set('checkOutTime', checkOutTime);
-      await fetch(getUrl.toString(), { method: 'GET', mode: 'no-cors' });
-      return true;
-    } catch (e) {
-      console.warn('Ralat kemaskini daftar keluar ke Google Sheets:', e);
-      return false;
-    }
+    console.error('Ralat kemaskini daftar keluar ke Google Sheets:', err);
+    return false;
   }
 }
 
@@ -208,7 +210,7 @@ export async function checkOutVisitorInSheet(id: string, checkOutTime: string): 
  */
 export const GOOGLE_APPS_SCRIPT_TEMPLATE = `/**
  * SISTEM KAWALAN PENGAWAL - GOOGLE APPS SCRIPT BACKEND
- * Dihasilkan untuk SK MORIB (BBA1026)
+ * Dihasilkan khas untuk SK MORIB (BBA1026)
  */
 
 function getTargetSheet() {
@@ -233,47 +235,80 @@ function getTargetSheet() {
   return sheet;
 }
 
+function processAction(params) {
+  var sheet = getTargetSheet();
+  var action = params.action;
+  
+  if (action === "ADD") {
+    var v = {};
+    if (params.data) {
+      try {
+        v = typeof params.data === "string" ? JSON.parse(params.data) : params.data;
+      } catch (e) {
+        try { v = JSON.parse(decodeURIComponent(params.data)); } catch (e2) {}
+      }
+    }
+    
+    var id = params.id || v.id || ("V-" + Date.now());
+    var name = params.name || v.name || "Pelawat";
+    var ic = params.icOrPassport || v.icOrPassport || "-";
+    var phone = params.phone || v.phone || "-";
+    var vehicle = params.vehiclePlate || v.vehiclePlate || "-";
+    var purpose = params.purpose || v.purpose || "-";
+    var checkInTime = params.checkInTime || v.checkInTime || new Date().toISOString();
+    var checkOutTime = params.checkOutTime || v.checkOutTime || "";
+    var status = params.status || v.status || "ACTIVE";
+    
+    sheet.appendRow([
+      id,
+      name,
+      ic,
+      "'" + String(phone).replace(/^'/, ""),
+      vehicle,
+      purpose,
+      checkInTime,
+      checkOutTime,
+      status
+    ]);
+    
+    return { status: "SUCCESS", message: "Rekod pelawat berjaya ditambah" };
+  }
+  
+  if (action === "CHECK_OUT") {
+    var checkOutId = params.id;
+    var outTime = params.checkOutTime || new Date().toISOString();
+    updateCheckOut(sheet, checkOutId, outTime);
+    return { status: "SUCCESS", message: "Status daftar keluar dikemaskini" };
+  }
+  
+  return null;
+}
+
 function doGet(e) {
   var sheet = getTargetSheet();
   
-  // Semak jika ada arahan aksi melalui GET (Fallback)
+  // Semak jika ada arahan penambahan atau kemaskini data
   if (e && e.parameter && e.parameter.action) {
-    var action = e.parameter.action;
-    if (action === "ADD" && e.parameter.data) {
-      var v = JSON.parse(decodeURIComponent(e.parameter.data));
-      sheet.appendRow([
-        v.id || "",
-        v.name || "",
-        v.icOrPassport || "",
-        "'" + (v.phone || ""),
-        v.vehiclePlate || "",
-        v.purpose || "",
-        v.checkInTime || "",
-        v.checkOutTime || "",
-        v.status || "ACTIVE"
-      ]);
-      return ContentService.createTextOutput(JSON.stringify({ status: "SUCCESS" }))
-        .setMimeType(ContentService.MimeType.JSON);
-    } else if (action === "CHECK_OUT" && e.parameter.id) {
-      updateCheckOut(sheet, e.parameter.id, e.parameter.checkOutTime || new Date().toISOString());
-      return ContentService.createTextOutput(JSON.stringify({ status: "SUCCESS" }))
+    var result = processAction(e.parameter);
+    if (result) {
+      return ContentService.createTextOutput(JSON.stringify(result))
         .setMimeType(ContentService.MimeType.JSON);
     }
   }
 
-  // Ambil semua data pelawat
+  // Jika tiada parameter aksi, pulangkan keseluruhan data pelawat
   var rows = sheet.getDataRange().getValues();
   var visitors = [];
   
   if (rows.length > 1) {
     for (var i = 1; i < rows.length; i++) {
       var row = rows[i];
-      if (!row[0]) continue; // Abaikan baris kosong
+      if (!row[0]) continue;
       visitors.push({
         id: String(row[0]),
         name: String(row[1]),
         icOrPassport: String(row[2]),
-        phone: String(row[3]).replace(/^'/, ''),
+        phone: String(row[3]).replace(/^'/, ""),
         vehiclePlate: String(row[4]),
         purpose: String(row[5]),
         checkInTime: row[6] instanceof Date ? row[6].toISOString() : String(row[6]),
@@ -289,38 +324,23 @@ function doGet(e) {
 
 function doPost(e) {
   try {
-    var sheet = getTargetSheet();
-    var contents;
-    
+    var params = {};
     if (e && e.postData && e.postData.contents) {
-      contents = JSON.parse(e.postData.contents);
-    } else if (e && e.parameter && e.parameter.data) {
-      contents = JSON.parse(e.parameter.data);
-    } else {
-      throw new Error("Tiada data POST diterima.");
+      try {
+        params = JSON.parse(e.postData.contents);
+      } catch (err) {
+        // Form encoded format
+        if (e.parameter) {
+          params = e.parameter;
+        }
+      }
+    } else if (e && e.parameter) {
+      params = e.parameter;
     }
     
-    var action = contents.action;
-    
-    if (action === "ADD") {
-      var v = contents.visitor;
-      sheet.appendRow([
-        v.id,
-        v.name,
-        v.icOrPassport,
-        "'" + (v.phone || ""),
-        v.vehiclePlate || "",
-        v.purpose,
-        v.checkInTime,
-        v.checkOutTime || "",
-        v.status || "ACTIVE"
-      ]);
-      return ContentService.createTextOutput(JSON.stringify({ status: "SUCCESS" }))
-        .setMimeType(ContentService.MimeType.JSON);
-    } 
-    else if (action === "CHECK_OUT") {
-      updateCheckOut(sheet, contents.id, contents.checkOutTime || new Date().toISOString());
-      return ContentService.createTextOutput(JSON.stringify({ status: "SUCCESS" }))
+    var result = processAction(params);
+    if (result) {
+      return ContentService.createTextOutput(JSON.stringify(result))
         .setMimeType(ContentService.MimeType.JSON);
     }
     

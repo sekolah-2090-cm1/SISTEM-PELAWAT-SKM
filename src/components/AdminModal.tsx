@@ -19,13 +19,18 @@ import {
   Eye,
   EyeOff,
   KeyRound,
-  LogOut
+  LogOut,
+  Send,
+  CheckCircle2,
+  HelpCircle,
+  ExternalLink
 } from 'lucide-react';
 import { Visitor } from '../types';
 import { 
   getGoogleSheetApiUrl, 
   setGoogleSheetApiUrl, 
   fetchVisitorsFromSheet, 
+  addVisitorToSheet,
   isValidGoogleAppsScriptUrl,
   GOOGLE_APPS_SCRIPT_TEMPLATE 
 } from '../services/sheetsService';
@@ -62,7 +67,7 @@ export default function AdminModal({
   const [passChangeSuccess, setPassChangeSuccess] = useState<string | null>(null);
   const [passChangeError, setPassChangeError] = useState<string | null>(null);
 
-  const [activeAdminTab, setActiveAdminTab] = useState<'pdf' | 'sheets' | 'export' | 'security'>('pdf');
+  const [activeAdminTab, setActiveAdminTab] = useState<'pdf' | 'sheets' | 'export' | 'security'>('sheets');
   
   // PDF Report State
   const [reportType, setReportType] = useState<'mingguan' | 'bulanan' | 'tahunan' | 'kustom'>('bulanan');
@@ -78,7 +83,8 @@ export default function AdminModal({
   // Google Sheets state
   const [url, setUrl] = useState(getGoogleSheetApiUrl());
   const [isTesting, setIsTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [isSendingTestRow, setIsSendingTestRow] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string; isSendTest?: boolean } | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
 
   // Reset auth when modal opens
@@ -265,9 +271,51 @@ export default function AdminModal({
     } else {
       setTestResult({
         success: false,
-        message: 'Gagal menyambung. Sila pastikan Google Apps Script telah di-deploy dengan tetapan "Who has access: Anyone" dan kod Apps Script terkini telah ditampal.'
+        message: 'Gagal mengambil data dari Google Sheets. Sila pastikan: (1) Tetapan "Who has access" adalah "Anyone", (2) "Execute as" adalah "Me", dan (3) Kod Apps Script terkini telah di-deploy dengan versi baharu.'
       });
     }
+  };
+
+  const handleSendTestRow = async () => {
+    if (!url.trim()) {
+      setTestResult({ success: false, message: 'Sila masukkan Web App URL terlebih dahulu.' });
+      return;
+    }
+
+    const validation = isValidGoogleAppsScriptUrl(url);
+    if (!validation.valid) {
+      setTestResult({ success: false, message: validation.reason || 'Format URL tidak sah.' });
+      return;
+    }
+
+    setIsSendingTestRow(true);
+    setTestResult(null);
+    setGoogleSheetApiUrl(url);
+
+    const testVisitor: Visitor = {
+      id: `TEST-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`,
+      name: 'UJIAN PENTADBIR SK MORIB',
+      icOrPassport: '900101-10-5555',
+      phone: '0123456789',
+      vehiclePlate: 'WXX 1234',
+      purpose: 'Ujian Sambungan Sistem Pengawal',
+      checkInTime: new Date().toISOString(),
+      checkOutTime: null,
+      status: 'ACTIVE'
+    };
+
+    await addVisitorToSheet(testVisitor);
+
+    // Wait 1.5 seconds for Google Apps Script execution
+    setTimeout(async () => {
+      setIsSendingTestRow(false);
+      setTestResult({
+        success: true,
+        isSendTest: true,
+        message: `Data ujian berjaya dihantar ke Google Sheets! Sila buka tab Google Sheet anda sekarang untuk melihat baris baharu "${testVisitor.name}".`
+      });
+      if (onSyncComplete) onSyncComplete();
+    }, 1500);
   };
 
   const handleCopyCode = () => {
@@ -442,18 +490,6 @@ export default function AdminModal({
             {/* Tab Navigation */}
             <div className="flex flex-wrap gap-2 my-5 p-1.5 bg-slate-100/80 rounded-2xl border border-slate-200/60 relative z-10">
               <button
-                onClick={() => setActiveAdminTab('pdf')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all ${
-                  activeAdminTab === 'pdf'
-                    ? 'bg-white text-blue-600 shadow-sm border border-slate-200/60'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
-              >
-                <Printer className="w-4 h-4" />
-                <span>Jana PDF</span>
-              </button>
-
-              <button
                 onClick={() => setActiveAdminTab('sheets')}
                 className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all ${
                   activeAdminTab === 'sheets'
@@ -463,6 +499,18 @@ export default function AdminModal({
               >
                 <Table className="w-4 h-4" />
                 <span>Google Sheets</span>
+              </button>
+
+              <button
+                onClick={() => setActiveAdminTab('pdf')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                  activeAdminTab === 'pdf'
+                    ? 'bg-white text-blue-600 shadow-sm border border-slate-200/60'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+                }`}
+              >
+                <Printer className="w-4 h-4" />
+                <span>Jana PDF</span>
               </button>
 
               <button
@@ -490,10 +538,124 @@ export default function AdminModal({
               </button>
             </div>
 
-            {/* Tab 1: Jana Laporan PDF */}
+            {/* Tab 1: Pangkalan Data Google Sheets */}
+            {activeAdminTab === 'sheets' && (
+              <div className="space-y-4 max-h-[58vh] overflow-y-auto pr-1 relative z-10 animate-in fade-in duration-150">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Google Apps Script Web App URL
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      value={url}
+                      onChange={(e) => {
+                        setUrl(e.target.value);
+                        setTestResult(null);
+                      }}
+                      placeholder="https://script.google.com/macros/s/AKfycby.../exec"
+                      className="flex-1 px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all shadow-inner"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveSheetUrl}
+                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-all shadow-md shrink-0 flex items-center gap-1.5"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>Simpan</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Test Status Feedback */}
+                {testResult && (
+                  <div className={`p-3.5 rounded-2xl border text-xs flex items-start gap-2.5 animate-in fade-in duration-150 ${
+                    testResult.success 
+                      ? 'bg-emerald-50 text-emerald-900 border-emerald-300' 
+                      : 'bg-amber-50 text-amber-900 border-amber-300'
+                  }`}>
+                    {testResult.success ? (
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600 mt-0.5 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+                    )}
+                    <div className="font-semibold leading-relaxed">{testResult.message}</div>
+                  </div>
+                )}
+
+                {/* Action Buttons: Test Connection & Send Test Row */}
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={handleSendTestRow}
+                    disabled={isSendingTestRow}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-blue-600/20"
+                  >
+                    <Send className={`w-3.5 h-3.5 ${isSendingTestRow ? 'animate-bounce' : ''}`} />
+                    <span>{isSendingTestRow ? 'Sedang Menghantar Data Ujian...' : 'Uji Hantar 1 Rekod ke Google Sheet'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleTestSheetConnection}
+                    disabled={isTesting}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition-all border border-slate-200"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin' : ''}`} />
+                    <span>{isTesting ? 'Menyemak Data...' : 'Semak Rekod Dalam Sheet'}</span>
+                  </button>
+                </div>
+
+                {/* Critical Troubleshooting Guide: Why data didn't enter */}
+                <div className="p-4 bg-amber-50/70 border border-amber-200/90 rounded-2xl space-y-2.5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-amber-900">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Panduan Utama: Mengapa Data Tidak Masuk ke Google Sheet?</span>
+                  </div>
+                  <ul className="text-[11px] text-amber-950 space-y-1.5 list-disc list-inside font-medium leading-relaxed pl-1">
+                    <li>
+                      <strong>Punca Utama (Akaun MOE):</strong> Semasa <em>Deploy Web App</em> di Google Apps Script, tetapan <strong>"Who has access"</strong> mestilah dipilih <strong>"Anyone"</strong> (Sesiapa sahaja). Jangan pilih <em>"Only myself"</em> atau <em>"Kementerian Pendidikan Malaysia"</em> kerana Google akan menyekat penghantaran data dari aplikasi.
+                    </li>
+                    <li>
+                      <strong>Execute as:</strong> Pastikan memilih <strong>"Me"</strong> (Akaun Google anda).
+                    </li>
+                    <li>
+                      <strong>Kemas Kini Skrip:</strong> Setiap kali menukar kod di Apps Script, klik <strong>Deploy &gt; Manage deployments &gt; Edit (Pensel ✏️) &gt; New version &gt; Deploy</strong>.
+                    </li>
+                  </ul>
+                </div>
+
+                {/* Apps Script Code Copy Section */}
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/80 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                      <Info className="w-4 h-4 text-blue-600" />
+                      <span>Kod Google Apps Script SK Morib (Terkini &amp; Multi-Channel)</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCopyCode}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        copiedCode
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {copiedCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedCode ? 'Telah Disalin!' : 'Salin Kod Apps Script'}</span>
+                    </button>
+                  </div>
+
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    Sila salin kod di atas dan tampal ke dalam <strong>Google Sheet &gt; Extensions &gt; Apps Script</strong> bagi menggantikan kod lama.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Tab 2: Jana Laporan PDF */}
             {activeAdminTab === 'pdf' && (
               <div className="space-y-5 max-h-[55vh] overflow-y-auto pr-1 relative z-10 animate-in fade-in duration-150">
-                
                 {/* Report Type Selector */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5">
@@ -693,95 +855,6 @@ export default function AdminModal({
                   <Printer className="w-5 h-5" />
                   <span>Jana & Cetak PDF Rasmi Sekarang</span>
                 </button>
-              </div>
-            )}
-
-            {/* Tab 2: Pangkalan Data Google Sheets */}
-            {activeAdminTab === 'sheets' && (
-              <div className="space-y-5 max-h-[55vh] overflow-y-auto pr-1 relative z-10 animate-in fade-in duration-150">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                    Google Apps Script Web App URL
-                  </label>
-                  <input
-                    type="url"
-                    value={url}
-                    onChange={(e) => {
-                      setUrl(e.target.value);
-                      setTestResult(null);
-                    }}
-                    placeholder="https://script.google.com/macros/s/AKfycby.../exec"
-                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all shadow-inner"
-                  />
-                  <p className="text-[11px] text-slate-500 mt-1.5">
-                    Pastikan URL bermula dengan <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700 font-mono text-[10px]">https://script.google.com/macros/s/.../exec</code>
-                  </p>
-                </div>
-
-                {/* Test Status Feedback */}
-                {testResult && (
-                  <div className={`p-4 rounded-2xl border text-xs flex items-start gap-2.5 ${
-                    testResult.success 
-                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
-                      : 'bg-amber-50 text-amber-800 border-amber-200'
-                  }`}>
-                    {testResult.success ? (
-                      <ShieldCheck className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
-                    ) : (
-                      <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-                    )}
-                    <div className="font-medium leading-relaxed">{testResult.message}</div>
-                  </div>
-                )}
-
-                {/* Actions for Sheet */}
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={handleTestSheetConnection}
-                    disabled={isTesting}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition-all border border-slate-200"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin' : ''}`} />
-                    {isTesting ? 'Menguji Sambungan...' : 'Uji Sambungan Google Sheets'}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleSaveSheetUrl}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-700/20"
-                  >
-                    <Check className="w-4 h-4" />
-                    Simpan Tetapan URL
-                  </button>
-                </div>
-
-                {/* Apps Script Code Helper & Copy Section */}
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/80 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
-                      <Info className="w-4 h-4 text-blue-600" />
-                      <span>Kod Google Apps Script SK Morib</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleCopyCode}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                        copiedCode
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      {copiedCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{copiedCode ? 'Telah Disalin!' : 'Salin Kod Apps Script'}</span>
-                    </button>
-                  </div>
-
-                  <p className="text-[11px] text-slate-600 leading-relaxed">
-                    Jika rekod belum masuk ke Google Sheet anda, buka Google Sheet &gt; <strong>Extensions &gt; Apps Script</strong>, padam kod lama dan tampal kod rasmi ini, kemudian klik <strong>Deploy &gt; Manage deployments &gt; Edit &gt; New version &gt; Deploy</strong>.
-                  </p>
-                </div>
-
               </div>
             )}
 

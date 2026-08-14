@@ -2,6 +2,7 @@
 
 @theme {
   --animate-blob: blob 7s infinite;
+  --animate-laser-scan: laser-scan 2s ease-in-out infinite;
   
   @keyframes blob {
     0% {
@@ -15,6 +16,17 @@
     }
     100% {
       transform: translate(0px, 0px) scale(1);
+    }
+  }
+
+  @keyframes laser-scan {
+    0%, 100% {
+      top: 5%;
+      opacity: 0.8;
+    }
+    50% {
+      top: 90%;
+      opacity: 1;
     }
   }
 }

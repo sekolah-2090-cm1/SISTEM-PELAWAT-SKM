@@ -208,7 +208,7 @@ export default function ReportPrintView({ config, visitors, onClose }: ReportPri
                       </tr>
                     ) : (
                       filteredVisitors.map((v, index) => (
-                        <tr key={v.id} className="hover:bg-slate-50/50 print:hover:bg-transparent">
+                        <tr key={`${v.id}-${index}`} className="hover:bg-slate-50/50 print:hover:bg-transparent">
                           <td className="p-2 text-center font-mono font-medium text-slate-500 border-r border-slate-200">
                             {index + 1}
                           </td>
