@@ -1,6 +1,6 @@
 {
-  "name": "Sistem Pendaftaran Pelawat Sekolah",
-  "description": "Papan pemuka pendaftaran masuk dan keluar pelawat untuk kegunaan di pondok pengawal sekolah.",
+  "name": "Sistem Pendaftaran Pelawat SK Morib",
+  "description": "Papan pemuka pendaftaran masuk dan keluar pelawat pondok pengawal SK Morib (BBA1026).",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Users, Search, Clock as ClockIcon, Activity, Download, ClipboardList, BarChart3, UserPlus, Table, RefreshCw, CloudCheck, CloudOff } from 'lucide-react';
+import { ShieldCheck, Users, Search, Clock as ClockIcon, Activity, Download, ClipboardList, BarChart3, UserPlus, Table, RefreshCw, Lock, Printer, FileText } from 'lucide-react';
 import { Visitor } from './types';
 import VisitorForm from './components/VisitorForm';
 import VisitorList from './components/VisitorList';
 import VisitorDetailModal from './components/VisitorDetailModal';
 import VisitorAnalyticsChart from './components/VisitorAnalyticsChart';
-import SheetSettingsModal from './components/SheetSettingsModal';
+import AdminModal from './components/AdminModal';
+import ReportPrintView, { ReportConfig } from './components/ReportPrintView';
 import { 
   getGoogleSheetApiUrl, 
   fetchVisitorsFromSheet, 
@@ -19,9 +20,10 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [activeTab, setActiveTab] = useState<'pendaftaran' | 'senarai' | 'analisis'>('pendaftaran');
   const [selectedVisitor, setSelectedVisitor] = useState<Visitor | null>(null);
-  const [isSheetSettingsOpen, setIsSheetSettingsOpen] = useState(false);
+  const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [hasSheetConfig, setHasSheetConfig] = useState(false);
+  const [activeReportConfig, setActiveReportConfig] = useState<ReportConfig | null>(null);
 
   // Check sheet configuration and load data
   const syncWithCloud = async () => {
@@ -188,37 +190,42 @@ export default function App() {
               <img src="https://i.postimg.cc/bwhChtbs/SKM.png" alt="Logo Sekolah" className="w-10 h-10 object-contain drop-shadow-sm" />
             </div>
             <div>
-              <h1 className="text-xl sm:text-2xl font-bold leading-tight tracking-tight text-slate-800">Sistem Kawalan Pengawal</h1>
-              <p className="text-blue-600 text-xs sm:text-sm font-semibold tracking-wide uppercase">Papan Pemuka Pendaftaran Pelawat</p>
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl sm:text-2xl font-bold leading-tight tracking-tight text-slate-800">Sistem Kawalan Pengawal</h1>
+                <span className="hidden sm:inline-block px-2 py-0.5 bg-blue-100 text-blue-700 font-mono font-bold text-[11px] rounded-md border border-blue-200">
+                  BBA1026
+                </span>
+              </div>
+              <p className="text-blue-600 text-xs sm:text-sm font-semibold tracking-wide uppercase">SK Morib • Pendaftaran Pelawat</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-            {/* Google Sheets Status & Sync Button */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setIsSheetSettingsOpen(true)}
-                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border transition-all shadow-sm ${
-                  hasSheetConfig
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                }`}
-                title="Konfigurasi sambungan Google Sheets"
-              >
-                <Table className="w-4 h-4 text-emerald-600" />
-                <span>{hasSheetConfig ? 'Google Sheets Aktif' : 'Sambung Google Sheets'}</span>
-              </button>
-
-              {hasSheetConfig && (
-                <button
-                  onClick={syncWithCloud}
-                  disabled={isSyncing}
-                  className="p-2 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 rounded-xl shadow-sm transition-all"
-                  title="Segerak data dengan Google Sheets sekarang"
-                >
-                  <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
-                </button>
+            {/* Admin Hub Button (Contains Google Sheets & PDF Generator) */}
+            <button
+              onClick={() => setIsAdminOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-700 hover:to-slate-800 text-white font-bold text-xs rounded-xl shadow-md transition-all hover:scale-[1.02] border border-slate-700/50"
+              title="Buka Panel Pentadbir: Jana PDF & Sambungan Google Sheets"
+            >
+              <Lock className="w-3.5 h-3.5 text-blue-400" />
+              <span>Pentadbir (Admin)</span>
+              {hasSheetConfig ? (
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Google Sheets Aktif" />
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-amber-400" title="Google Sheets Belum Dikonfigurasi" />
               )}
-            </div>
+            </button>
+
+            {/* Quick Sync Button if Configured */}
+            {hasSheetConfig && (
+              <button
+                onClick={syncWithCloud}
+                disabled={isSyncing}
+                className="p-2.5 bg-white/80 hover:bg-white text-slate-600 hover:text-blue-600 border border-slate-200/80 rounded-xl shadow-sm transition-all"
+                title="Segerak data dengan Google Sheets sekarang"
+              >
+                <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
+              </button>
+            )}
 
             {/* Clock */}
             <div className="flex items-center gap-3 bg-white/60 backdrop-blur-sm px-4 py-2 rounded-xl border border-white shadow-sm flex-1 sm:flex-initial">
@@ -392,9 +399,33 @@ export default function App() {
 
               </div>
               
+              {/* PDF Report Generation Action Card */}
+              <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-slate-800 rounded-3xl p-6 sm:p-8 text-white shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 relative overflow-hidden">
+                <div className="relative z-10 max-w-xl">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-xs font-bold uppercase tracking-wider mb-3">
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Laporan Rasmi Sekolah</span>
+                  </div>
+                  <h3 className="text-xl sm:text-2xl font-black tracking-tight leading-snug">
+                    Jana Laporan PDF Analisis Pelawat
+                  </h3>
+                  <p className="text-blue-100 text-xs sm:text-sm mt-1 leading-relaxed">
+                    Hasilkan dokumen PDF rasmi lengkap dengan analisis statistik mingguan, bulanan, atau tahunan berserta ruangan pengesahan pentadbir.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAdminOpen(true)}
+                  className="relative z-10 inline-flex items-center justify-center gap-2.5 px-6 py-3.5 bg-white hover:bg-blue-50 text-slate-900 hover:text-blue-700 font-bold text-sm rounded-2xl transition-all shadow-lg hover:scale-105 shrink-0"
+                >
+                  <FileText className="w-4 h-4 text-blue-600" />
+                  <span>Buka Penjana PDF</span>
+                </button>
+              </div>
+
               <div className="bg-white/60 backdrop-blur-md rounded-2xl p-6 border border-white shadow-sm">
                 <p className="text-slate-500 text-sm leading-relaxed font-medium">
-                  Nota: Analisis ini memaparkan jumlah pelawat yang mendaftar masuk berdasarkan tarikh yang direkodkan ke dalam sistem. Data disunting dan direkod secara tempatan.
+                  Nota: Analisis ini memaparkan jumlah pelawat yang mendaftar masuk berdasarkan tarikh yang direkodkan ke dalam sistem. Data disunting dan disegerak bersama Google Sheets & storan tempatan.
                 </p>
               </div>
 
@@ -412,15 +443,26 @@ export default function App() {
         onCheckOut={handleCheckOut}
       />
 
-      {/* Google Sheets Settings Modal */}
-      <SheetSettingsModal
-        isOpen={isSheetSettingsOpen}
+      {/* Admin Modal (Includes PDF Generator & Google Sheets Sync) */}
+      <AdminModal
+        isOpen={isAdminOpen}
         onClose={() => {
-          setIsSheetSettingsOpen(false);
+          setIsAdminOpen(false);
           setHasSheetConfig(!!getGoogleSheetApiUrl());
         }}
+        visitors={visitors}
+        onGenerateReport={(config) => setActiveReportConfig(config)}
         onSyncComplete={syncWithCloud}
       />
+
+      {/* Printable PDF Report View */}
+      {activeReportConfig && (
+        <ReportPrintView
+          config={activeReportConfig}
+          visitors={visitors}
+          onClose={() => setActiveReportConfig(null)}
+        />
+      )}
     </div>
   );
 }
