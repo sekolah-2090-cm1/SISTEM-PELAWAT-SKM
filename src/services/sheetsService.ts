@@ -109,6 +109,64 @@ export async function fetchVisitorsFromSheet(): Promise<Visitor[] | null> {
 }
 
 /**
+ * Smart merge between local visitor records and cloud Google Sheets records.
+ * Resolves multi-device concurrency and prevents data loss:
+ * - If record exists in both, status 'CHECKED_OUT' takes precedence with latest checkOutTime.
+ * - If record was registered locally within the last 24 hours and hasn't yet synced to cloud, preserves it.
+ * - Cloud-only records from other devices (phones, tabs, laptops) are seamlessly added.
+ * - Deduplicates keys to guarantee zero React key errors.
+ * - Orders by checkInTime descending (newest visitors first).
+ */
+export function mergeVisitors(localVisitors: Visitor[], cloudVisitors: Visitor[]): Visitor[] {
+  const visitorMap = new Map<string, Visitor>();
+
+  // 1. Ingest cloud visitors first
+  if (Array.isArray(cloudVisitors)) {
+    for (const cv of cloudVisitors) {
+      if (!cv || !cv.id) continue;
+      visitorMap.set(cv.id, { ...cv });
+    }
+  }
+
+  // 2. Merge local visitors
+  const now = Date.now();
+  if (Array.isArray(localVisitors)) {
+    for (const lv of localVisitors) {
+      if (!lv || !lv.id) continue;
+
+      if (visitorMap.has(lv.id)) {
+        const existing = visitorMap.get(lv.id)!;
+        // If either local or cloud has marked CHECKED_OUT, checkout takes precedence
+        const isCheckedOut = existing.status === 'CHECKED_OUT' || lv.status === 'CHECKED_OUT';
+        const checkOutTime = existing.checkOutTime || lv.checkOutTime || (isCheckedOut ? new Date().toISOString() : null);
+
+        visitorMap.set(lv.id, {
+          ...existing,
+          ...lv,
+          status: isCheckedOut ? 'CHECKED_OUT' : 'ACTIVE',
+          checkOutTime: checkOutTime,
+          checkInTime: existing.checkInTime || lv.checkInTime,
+        });
+      } else {
+        // Record created locally on this device that might not yet be written to cloud
+        const localCheckIn = new Date(lv.checkInTime).getTime();
+        const ageHours = (now - localCheckIn) / (1000 * 60 * 60);
+        if (isNaN(ageHours) || ageHours < 24) {
+          visitorMap.set(lv.id, { ...lv });
+        }
+      }
+    }
+  }
+
+  // Convert to array and sort by checkInTime descending
+  return Array.from(visitorMap.values()).sort((a, b) => {
+    const timeA = new Date(a.checkInTime).getTime();
+    const timeB = new Date(b.checkInTime).getTime();
+    return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
+  });
+}
+
+/**
  * Append new visitor to Google Sheets with 100% reliable multi-channel delivery.
  * Passes params in query string (GET) AND form payload (POST) so redirects never drop data.
  */

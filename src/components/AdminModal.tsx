@@ -367,7 +367,7 @@ export default function AdminModal({
       />
 
       {/* Modal Box */}
-      <div className="relative w-full max-w-3xl bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white p-6 sm:p-8 z-10 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      <div className="relative w-full max-w-3xl max-h-[92vh] overflow-y-auto bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white p-5 sm:p-8 z-10 animate-in fade-in zoom-in-95 duration-200">
         
         {/* Glow Accent */}
         <div className="absolute top-0 right-0 w-80 h-80 bg-blue-300/20 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20"></div>

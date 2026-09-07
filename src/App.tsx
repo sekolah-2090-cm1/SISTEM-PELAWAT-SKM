@@ -1,5 +1,24 @@
-import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Users, Search, Clock as ClockIcon, Activity, Download, ClipboardList, BarChart3, UserPlus, Table, RefreshCw, Lock, Printer, FileText, QrCode, Camera } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { 
+  Users, 
+  Search, 
+  Clock as ClockIcon, 
+  Activity, 
+  Download, 
+  ClipboardList, 
+  BarChart3, 
+  UserPlus, 
+  RefreshCw, 
+  Lock, 
+  Printer, 
+  FileText, 
+  Camera, 
+  Wifi, 
+  WifiOff, 
+  CheckCircle2, 
+  X, 
+  Sparkles 
+} from 'lucide-react';
 import { Visitor } from './types';
 import VisitorForm from './components/VisitorForm';
 import VisitorList from './components/VisitorList';
@@ -13,7 +32,8 @@ import {
   getGoogleSheetApiUrl, 
   fetchVisitorsFromSheet, 
   addVisitorToSheet, 
-  checkOutVisitorInSheet 
+  checkOutVisitorInSheet,
+  mergeVisitors
 } from './services/sheetsService';
 
 // Helper to guarantee unique IDs across any visitor list
@@ -43,13 +63,20 @@ function sanitizeVisitorsList(list: any[]): Visitor[] {
 
 export default function App() {
   const [visitors, setVisitors] = useState<Visitor[]>([]);
+  const visitorsRef = useRef<Visitor[]>(visitors);
+  visitorsRef.current = visitors;
+
   const [searchTerm, setSearchTerm] = useState('');
   const [currentTime, setCurrentTime] = useState(new Date());
   const [activeTab, setActiveTab] = useState<'pendaftaran' | 'senarai' | 'analisis'>('pendaftaran');
   const [selectedVisitor, setSelectedVisitor] = useState<Visitor | null>(null);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
+  
+  // Real-time synchronization state
   const [isSyncing, setIsSyncing] = useState(false);
   const [hasSheetConfig, setHasSheetConfig] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [activeReportConfig, setActiveReportConfig] = useState<ReportConfig | null>(null);
   
   // QR Scanner & Visitor Pass Modals
@@ -57,24 +84,46 @@ export default function App() {
   const [passVisitor, setPassVisitor] = useState<Visitor | null>(null);
   const [isPassModalOpen, setIsPassModalOpen] = useState(false);
 
-  // Check sheet configuration and load data
-  const syncWithCloud = async () => {
-    const apiUrl = getGoogleSheetApiUrl();
-    setHasSheetConfig(!!apiUrl);
-    if (!apiUrl) return;
-
-    setIsSyncing(true);
-    const cloudVisitors = await fetchVisitorsFromSheet();
-    setIsSyncing(false);
-
-    if (cloudVisitors && cloudVisitors.length > 0) {
-      const sanitized = sanitizeVisitorsList(cloudVisitors);
-      setVisitors(sanitized);
-      localStorage.setItem('school_visitors', JSON.stringify(sanitized));
+  // Broadcast channel for multi-tab synchronization on the same device
+  const broadcastSync = useCallback(() => {
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        const bc = new BroadcastChannel('sk_morib_visitors_channel');
+        bc.postMessage({ type: 'LOCAL_DATA_UPDATED', timestamp: Date.now() });
+        bc.close();
+      } catch (e) {}
     }
-  };
+  }, []);
 
-  // Load initial data from localStorage first, then sync with Cloud if available
+  // Multi-device Cloud Sync Engine
+  const syncWithCloud = useCallback(async (silent = false) => {
+    const apiUrl = getGoogleSheetApiUrl();
+    const isConfigured = !!apiUrl;
+    setHasSheetConfig(isConfigured);
+    if (!isConfigured) return;
+
+    if (!silent) setIsSyncing(true);
+
+    try {
+      const cloudVisitors = await fetchVisitorsFromSheet();
+      if (cloudVisitors && Array.isArray(cloudVisitors)) {
+        // Smart merge resolves cross-device updates without wiping recent local inputs
+        const merged = mergeVisitors(visitorsRef.current, cloudVisitors);
+        const sanitized = sanitizeVisitorsList(merged);
+        
+        setVisitors(sanitized);
+        localStorage.setItem('school_visitors', JSON.stringify(sanitized));
+        setLastSyncedAt(new Date());
+        setIsOnline(true);
+      }
+    } catch (error) {
+      console.warn('Sync attempt warning:', error);
+    } finally {
+      if (!silent) setIsSyncing(false);
+    }
+  }, []);
+
+  // 1. Initial Data Load (from localStorage immediately, then Cloud)
   useEffect(() => {
     const saved = localStorage.getItem('school_visitors');
     if (saved) {
@@ -86,20 +135,83 @@ export default function App() {
       }
     }
 
-    syncWithCloud();
-  }, []);
+    syncWithCloud(false);
+  }, [syncWithCloud]);
 
-  // Save to localStorage whenever visitors change
+  // 2. Real-Time Multi-Device Sync Listeners
+  useEffect(() => {
+    // A. Automatic background polling every 12 seconds
+    const pollTimer = setInterval(() => {
+      syncWithCloud(true);
+    }, 12000);
+
+    // B. Re-sync when user returns to the tab or unlocks their smartphone
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        syncWithCloud(true);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    // C. Re-sync when window gains focus (switching windows on laptop or tablet)
+    const handleFocus = () => {
+      syncWithCloud(true);
+    };
+    window.addEventListener('focus', handleFocus);
+
+    // D. Network state changes
+    const handleOnline = () => {
+      setIsOnline(true);
+      syncWithCloud(false);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // E. Cross-tab synchronization
+    let channel: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        channel = new BroadcastChannel('sk_morib_visitors_channel');
+        channel.onmessage = (event) => {
+          if (event.data?.type === 'LOCAL_DATA_UPDATED') {
+            const latest = localStorage.getItem('school_visitors');
+            if (latest) {
+              try {
+                setVisitors(sanitizeVisitorsList(JSON.parse(latest)));
+              } catch (e) {}
+            }
+          }
+        };
+      } catch (e) {}
+    }
+
+    return () => {
+      clearInterval(pollTimer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      if (channel) {
+        try { channel.close(); } catch (e) {}
+      }
+    };
+  }, [syncWithCloud]);
+
+  // 3. Save to localStorage whenever visitors change & notify other tabs
   useEffect(() => {
     localStorage.setItem('school_visitors', JSON.stringify(visitors));
   }, [visitors]);
 
-  // Update clock every second
+  // 4. Update Clock every second
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
+  // Handle Add Visitor
   const handleAddVisitor = async (visitorData: Omit<Visitor, 'id' | 'checkInTime' | 'checkOutTime' | 'status'>) => {
     const newVisitor: Visitor = {
       ...visitorData,
@@ -113,18 +225,23 @@ export default function App() {
     setVisitors((prev) => [newVisitor, ...prev]);
     setActiveTab('senarai');
 
-    // Automatically prompt Visitor Pass with QR Code
+    // Prompt Visitor Pass with QR Code
     setPassVisitor(newVisitor);
     setIsPassModalOpen(true);
+
+    // Broadcast update to other tabs/windows
+    broadcastSync();
 
     // Async sync to Google Sheets
     if (getGoogleSheetApiUrl()) {
       setIsSyncing(true);
       await addVisitorToSheet(newVisitor);
       setIsSyncing(false);
+      setLastSyncedAt(new Date());
     }
   };
 
+  // Handle Check Out Visitor
   const handleCheckOut = async (id: string) => {
     const checkOutTime = new Date().toISOString();
     
@@ -137,11 +254,15 @@ export default function App() {
       )
     );
 
+    // Broadcast update to other tabs/windows
+    broadcastSync();
+
     // Async sync to Google Sheets
     if (getGoogleSheetApiUrl()) {
       setIsSyncing(true);
       await checkOutVisitorInSheet(id, checkOutTime);
       setIsSyncing(false);
+      setLastSyncedAt(new Date());
     }
   };
 
@@ -150,7 +271,7 @@ export default function App() {
     setIsPassModalOpen(true);
   };
 
-  // Compute stats
+  // Compute stats for today
   const now = new Date();
   const todayStr = now.toLocaleDateString();
   
@@ -162,10 +283,10 @@ export default function App() {
 
   // Analytics Stats
   const getWeekNumber = (d: Date) => {
-    d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay()||7));
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
-    return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1)/7);
+    const target = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    target.setUTCDate(target.getUTCDate() + 4 - (target.getUTCDay() || 7));
+    const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
+    return Math.ceil((((target.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
   };
 
   const totalThisWeek = visitors.filter(v => {
@@ -184,9 +305,7 @@ export default function App() {
   }).length;
 
   const handleExportCSV = () => {
-    if (visitorsToday.length === 0) {
-      return;
-    }
+    if (visitorsToday.length === 0) return;
 
     const headers = ['Nama Penuh', 'No. KP / Pasport', 'No. Telefon', 'No. Kenderaan', 'Tujuan', 'Masa Masuk', 'Masa Keluar', 'Status'];
     
@@ -218,190 +337,366 @@ export default function App() {
     document.body.removeChild(link);
   };
 
+  // Helper for formatted last sync text
+  const getLastSyncText = () => {
+    if (!hasSheetConfig) return 'Storan Tempatan (Offline-Ready)';
+    if (!isOnline) return 'Luar Talian (Data Tersimpan)';
+    if (isSyncing) return 'Menyegerak data...';
+    if (!lastSyncedAt) return 'Bersambung ke Cloud';
+    
+    const diffSec = Math.round((Date.now() - lastSyncedAt.getTime()) / 1000);
+    if (diffSec < 15) return 'Data Terkini (Disegerak)';
+    if (diffSec < 60) return `Segerak ${diffSec}s lepas`;
+    return `Segerak ${Math.round(diffSec / 60)}m lepas`;
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 relative overflow-hidden font-sans selection:bg-blue-200">
-      {/* Background Blobs for Glassmorphism Effect */}
-      <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-200 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob pointer-events-none"></div>
-      <div className="absolute top-[20%] right-[-10%] w-[400px] h-[400px] bg-purple-200 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob animation-delay-2000 pointer-events-none"></div>
-      <div className="absolute bottom-[-10%] left-[20%] w-[600px] h-[600px] bg-pink-200 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob animation-delay-4000 pointer-events-none"></div>
+      {/* Background Soft Blobs for Ambient Contrast */}
+      <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-200/50 rounded-full mix-blend-multiply filter blur-3xl opacity-40 pointer-events-none"></div>
+      <div className="absolute top-[20%] right-[-10%] w-[400px] h-[400px] bg-indigo-200/50 rounded-full mix-blend-multiply filter blur-3xl opacity-40 pointer-events-none"></div>
+      <div className="absolute bottom-[-10%] left-[20%] w-[600px] h-[600px] bg-sky-200/50 rounded-full mix-blend-multiply filter blur-3xl opacity-40 pointer-events-none"></div>
 
-      {/* Header */}
-      <header className="bg-white/70 backdrop-blur-md sticky top-0 z-30 border-b border-white/50 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-auto sm:h-20 flex flex-col sm:flex-row items-start sm:items-center justify-between py-4 sm:py-0 gap-4 sm:gap-0">
-          <div className="flex items-center gap-4">
-            <div className="bg-white p-2 rounded-xl border border-slate-100 shadow-sm">
-              <img src="https://i.postimg.cc/bwhChtbs/SKM.png" alt="Logo Sekolah" className="w-10 h-10 object-contain drop-shadow-sm" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl sm:text-2xl font-bold leading-tight tracking-tight text-slate-800">Sistem Kawalan Pengawal</h1>
-                <span className="hidden sm:inline-block px-2 py-0.5 bg-blue-100 text-blue-700 font-mono font-bold text-[11px] rounded-md border border-blue-200">
-                  BBA1026
-                </span>
+      {/* ========================================================= */}
+      {/* HEADER: Fully responsive for Phones, Tablets, and Laptops */}
+      {/* ========================================================= */}
+      <header className="bg-white/80 backdrop-blur-md sticky top-0 z-30 border-b border-slate-200/70 shadow-xs">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3.5">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            
+            {/* School Brand & Sync Status Row */}
+            <div className="flex items-center justify-between sm:justify-start gap-3">
+              <div className="flex items-center gap-3">
+                <div className="bg-white p-1.5 sm:p-2 rounded-xl border border-slate-200 shadow-xs shrink-0">
+                  <img 
+                    src="https://i.postimg.cc/bwhChtbs/SKM.png" 
+                    alt="Logo SK Morib" 
+                    className="w-9 h-9 sm:w-10 sm:h-10 object-contain drop-shadow-xs" 
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-base sm:text-xl font-black text-slate-900 tracking-tight leading-tight">
+                      Sistem Kawalan Pengawal
+                    </h1>
+                    <span className="px-2 py-0.5 bg-blue-100 text-blue-800 font-mono font-bold text-[10px] sm:text-[11px] rounded-md border border-blue-200">
+                      BBA1026
+                    </span>
+                  </div>
+                  <p className="text-blue-700 text-xs font-semibold tracking-wide flex items-center gap-1.5">
+                    <span>SK Morib</span>
+                    <span>•</span>
+                    <span className="font-mono text-slate-500 font-normal">Pondok Keselamatan</span>
+                  </p>
+                </div>
               </div>
-              <p className="text-blue-600 text-xs sm:text-sm font-semibold tracking-wide uppercase">SK Morib • Pendaftaran Pelawat</p>
+
+              {/* Mobile Sync Indicator (Pill) */}
+              <div className="sm:hidden">
+                <div className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                  !isOnline 
+                    ? 'bg-amber-100 text-amber-800 border-amber-300'
+                    : hasSheetConfig 
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-200' 
+                      : 'bg-slate-100 text-slate-700 border-slate-200'
+                }`}>
+                  <span className={`w-2 h-2 rounded-full ${
+                    !isOnline 
+                      ? 'bg-amber-500' 
+                      : hasSheetConfig 
+                        ? (isSyncing ? 'bg-blue-500 animate-spin' : 'bg-emerald-500 animate-pulse') 
+                        : 'bg-slate-400'
+                  }`}></span>
+                  <span>{isOnline ? (hasSheetConfig ? (isSyncing ? 'Segerak...' : 'Auto') : 'Tempatan') : 'Offline'}</span>
+                </div>
+              </div>
             </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-            {/* Quick QR Scanner Button for Security Guard */}
-            <button
-              onClick={() => setIsScannerOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl shadow-md shadow-blue-500/20 transition-all hover:scale-[1.02] border border-blue-400/30"
-              title="Buka Pengimbas Kod QR untuk Daftar Keluar Pantas"
-            >
-              <Camera className="w-4 h-4 text-blue-200" />
-              <span>Imbas Pas QR</span>
-              <span className="px-1.5 py-0.5 bg-blue-400/30 text-white text-[10px] rounded-md uppercase font-black tracking-wider">
-                Kamera
-              </span>
-            </button>
 
-            {/* Admin Hub Button (Contains Google Sheets & PDF Generator) */}
-            <button
-              onClick={() => setIsAdminOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-700 hover:to-slate-800 text-white font-bold text-xs rounded-xl shadow-md transition-all hover:scale-[1.02] border border-slate-700/50"
-              title="Buka Panel Pentadbir: Jana PDF & Sambungan Google Sheets"
-            >
-              <Lock className="w-3.5 h-3.5 text-blue-400" />
-              <span>Pentadbir (Admin)</span>
-              {hasSheetConfig ? (
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Google Sheets Aktif" />
-              ) : (
-                <span className="w-2 h-2 rounded-full bg-amber-400" title="Google Sheets Belum Dikonfigurasi" />
-              )}
-            </button>
+            {/* Actions & Live Clocks Row */}
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3">
+              
+              {/* Desktop Live Sync Status Badge */}
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-100/80 rounded-xl border border-slate-200/80 text-xs">
+                {isOnline ? (
+                  hasSheetConfig ? (
+                    <span className="flex items-center gap-1.5 text-emerald-700 font-semibold">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      <span>{getLastSyncText()}</span>
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-slate-600 font-medium">
+                      <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                      <span>Storan Tempatan</span>
+                    </span>
+                  )
+                ) : (
+                  <span className="flex items-center gap-1.5 text-amber-700 font-semibold">
+                    <WifiOff className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Luar Talian</span>
+                  </span>
+                )}
 
-            {/* Quick Sync Button if Configured */}
-            {hasSheetConfig && (
+                {hasSheetConfig && (
+                  <button
+                    type="button"
+                    onClick={() => syncWithCloud(false)}
+                    disabled={isSyncing}
+                    className="p-1 text-slate-500 hover:text-blue-600 rounded transition-colors"
+                    title="Segerak sekarang dengan Google Sheets"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
+                  </button>
+                )}
+              </div>
+
+              {/* Big, thumb-friendly QR Scanner Button for Security Guard */}
               <button
-                onClick={syncWithCloud}
-                disabled={isSyncing}
-                className="p-2.5 bg-white/80 hover:bg-white text-slate-600 hover:text-blue-600 border border-slate-200/80 rounded-xl shadow-sm transition-all"
-                title="Segerak data dengan Google Sheets sekarang"
+                type="button"
+                onClick={() => setIsScannerOpen(true)}
+                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 min-h-[44px] px-3.5 sm:px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-blue-600/20 transition-all active:scale-95 border border-blue-400/30"
+                title="Buka Pengimbas Kod QR untuk Daftar Keluar Pantas"
               >
-                <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
+                <Camera className="w-4 h-4 text-blue-200 shrink-0" />
+                <span>Imbas Pas QR</span>
               </button>
-            )}
 
-            {/* Clock */}
-            <div className="flex items-center gap-3 bg-white/60 backdrop-blur-sm px-4 py-2 rounded-xl border border-white shadow-sm flex-1 sm:flex-initial">
-              <ClockIcon className="w-5 h-5 text-blue-500" />
-              <div className="text-left sm:text-right flex-1 sm:flex-initial flex sm:block justify-between items-center sm:items-stretch">
-                <div className="text-sm font-bold tracking-wider font-mono text-slate-700">
-                  {currentTime.toLocaleTimeString('ms-MY', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
-                </div>
-                <div className="text-xs text-slate-500 font-medium uppercase tracking-wider hidden sm:block">
-                  {currentTime.toLocaleDateString('ms-MY', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
+              {/* Admin Hub Button */}
+              <button
+                type="button"
+                onClick={() => setIsAdminOpen(true)}
+                className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-3 sm:px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm rounded-xl shadow-sm transition-all active:scale-95 border border-slate-800"
+                title="Buka Panel Pentadbir: Jana PDF & Sambungan Google Sheets"
+              >
+                <Lock className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                <span className="hidden xs:inline">Pentadbir</span>
+                <span className="xs:hidden">Admin</span>
+                {hasSheetConfig ? (
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+                ) : (
+                  <span className="w-2 h-2 rounded-full bg-amber-400 ml-0.5" />
+                )}
+              </button>
+
+              {/* Mobile Quick Sync Icon Button */}
+              {hasSheetConfig && (
+                <button
+                  type="button"
+                  onClick={() => syncWithCloud(false)}
+                  disabled={isSyncing}
+                  className="sm:hidden min-h-[44px] min-w-[44px] flex items-center justify-center bg-white text-slate-700 border border-slate-200 rounded-xl active:bg-slate-100 transition-colors shadow-xs"
+                  title="Segerak Data Sekarang"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
+                </button>
+              )}
+
+              {/* Digital Clock */}
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-white/90 rounded-xl border border-slate-200 shadow-xs min-h-[44px] shrink-0">
+                <ClockIcon className="w-4 h-4 text-blue-600 shrink-0" />
+                <div className="text-right">
+                  <div className="text-xs sm:text-sm font-black font-mono text-slate-800 tracking-wider">
+                    {currentTime.toLocaleTimeString('ms-MY', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-semibold hidden md:block">
+                    {currentTime.toLocaleDateString('ms-MY', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
+                  </div>
                 </div>
               </div>
+
             </div>
+
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-20">
+      {/* ========================================================= */}
+      {/* MAIN BODY                                                 */}
+      {/* ========================================================= */}
+      <main className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-5 sm:py-8 relative z-20">
         
-        {/* Navigation Tabs */}
-        <div className="flex flex-wrap gap-2 mb-8 bg-white/40 p-2 rounded-2xl backdrop-blur-sm border border-white/50 shadow-sm">
+        {/* Navigation Tabs (Touch friendly, min 44px height) */}
+        <div className="flex gap-1.5 sm:gap-2 mb-6 sm:mb-8 bg-slate-200/70 p-1.5 rounded-2xl backdrop-blur-sm border border-slate-200 shadow-xs">
+          
           <button 
+            type="button"
             onClick={() => setActiveTab('pendaftaran')}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold text-sm transition-all duration-300 ${activeTab === 'pendaftaran' ? 'bg-white text-blue-600 shadow-sm border border-white scale-[1.02]' : 'text-slate-600 hover:bg-white/50 hover:text-slate-800'}`}
+            className={`flex-1 min-h-[44px] flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-6 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all duration-200 active:scale-95 ${
+              activeTab === 'pendaftaran' 
+                ? 'bg-white text-blue-600 shadow-xs border border-slate-200/80' 
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/40'
+            }`}
           >
-            <UserPlus className="w-4 h-4" />
-            <span className="hidden sm:inline">Pendaftaran</span> Pelawat
+            <UserPlus className="w-4 h-4 shrink-0" />
+            <span>Pendaftaran</span>
+            <span className="hidden sm:inline">Pelawat</span>
           </button>
+
           <button 
+            type="button"
             onClick={() => setActiveTab('senarai')}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold text-sm transition-all duration-300 ${activeTab === 'senarai' ? 'bg-white text-blue-600 shadow-sm border border-white scale-[1.02]' : 'text-slate-600 hover:bg-white/50 hover:text-slate-800'}`}
+            className={`flex-1 min-h-[44px] flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-6 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all duration-200 active:scale-95 ${
+              activeTab === 'senarai' 
+                ? 'bg-white text-blue-600 shadow-xs border border-slate-200/80' 
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/40'
+            }`}
           >
-            <ClipboardList className="w-4 h-4" />
-            Senarai <span className="hidden sm:inline">Terkini</span>
+            <ClipboardList className="w-4 h-4 shrink-0" />
+            <span>Senarai</span>
+            <span className="hidden sm:inline">Terkini</span>
+            {activeVisitors > 0 && (
+              <span className="px-2 py-0.5 bg-amber-500 text-white text-[10px] font-black rounded-full font-mono shadow-xs">
+                {activeVisitors}
+              </span>
+            )}
           </button>
+
           <button 
+            type="button"
             onClick={() => setActiveTab('analisis')}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold text-sm transition-all duration-300 ${activeTab === 'analisis' ? 'bg-white text-blue-600 shadow-sm border border-white scale-[1.02]' : 'text-slate-600 hover:bg-white/50 hover:text-slate-800'}`}
+            className={`flex-1 min-h-[44px] flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-6 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all duration-200 active:scale-95 ${
+              activeTab === 'analisis' 
+                ? 'bg-white text-blue-600 shadow-xs border border-slate-200/80' 
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/40'
+            }`}
           >
-            <BarChart3 className="w-4 h-4" />
-            Analisis <span className="hidden sm:inline">Pelawat</span>
+            <BarChart3 className="w-4 h-4 shrink-0" />
+            <span>Analisis</span>
+            <span className="hidden sm:inline">Pelawat</span>
           </button>
+
         </div>
 
         {/* Tab Content */}
-        <div className="transition-all duration-500">
+        <div className="transition-all duration-300">
           
-          {/* TAB 1: Pendaftaran */}
+          {/* ========================================================= */}
+          {/* TAB 1: Pendaftaran Pelawat                                */}
+          {/* ========================================================= */}
           {activeTab === 'pendaftaran' && (
-            <div className="max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-2 duration-300">
               <VisitorForm onSubmit={handleAddVisitor} />
             </div>
           )}
 
-          {/* TAB 2: Senarai Terkini */}
+          {/* ========================================================= */}
+          {/* TAB 2: Senarai Terkini (Today's Visitors)                 */}
+          {/* ========================================================= */}
           {activeTab === 'senarai' && (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 flex flex-col gap-6">
-              {/* Quick Stats for today only */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="bg-white/70 backdrop-blur-md p-6 rounded-2xl shadow-sm border border-white flex items-center gap-5 relative overflow-hidden group hover:shadow-xl hover:scale-[1.02] transition-all duration-300">
-                  <div className="bg-blue-50/80 p-4 rounded-xl border border-blue-100 relative z-10">
-                    <Users className="w-8 h-8 text-blue-600" />
+            <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 flex flex-col gap-5 sm:gap-6">
+              
+              {/* Responsive Quick Stats: 2 columns on Mobile, Tablets, and Desktops */}
+              <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                
+                {/* Total Today Card */}
+                <div className="bg-white/90 backdrop-blur-md p-4 sm:p-5 rounded-2xl shadow-xs border border-slate-200 flex items-center gap-3.5 sm:gap-5 hover:shadow-md transition-all">
+                  <div className="bg-blue-50 p-2.5 sm:p-4 rounded-xl border border-blue-100 shrink-0">
+                    <Users className="w-5 h-5 sm:w-7 sm:h-7 text-blue-600" />
                   </div>
-                  <div className="relative z-10">
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Jumlah Hari Ini</p>
-                    <h3 className="text-4xl font-black text-slate-800 font-mono">{totalToday}</h3>
-                  </div>
-                </div>
-                <div className="bg-white/70 backdrop-blur-md p-6 rounded-2xl shadow-sm border border-white flex items-center gap-5 relative overflow-hidden group hover:shadow-xl hover:scale-[1.02] transition-all duration-300">
-                  <div className="bg-amber-50/80 p-4 rounded-xl border border-amber-100 relative z-10">
-                    <Activity className="w-8 h-8 text-amber-500" />
-                  </div>
-                  <div className="relative z-10">
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Masih Dalam Kawasan</p>
-                    <h3 className="text-4xl font-black text-slate-800 font-mono">{activeVisitors}</h3>
+                  <div className="min-w-0">
+                    <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider truncate">
+                      Jumlah Hari Ini
+                    </p>
+                    <h3 className="text-2xl sm:text-4xl font-black text-slate-900 font-mono">
+                      {totalToday}
+                    </h3>
                   </div>
                 </div>
+
+                {/* Active in Premises Card */}
+                <div className="bg-white/90 backdrop-blur-md p-4 sm:p-5 rounded-2xl shadow-xs border border-slate-200 flex items-center gap-3.5 sm:gap-5 hover:shadow-md transition-all">
+                  <div className="bg-amber-50 p-2.5 sm:p-4 rounded-xl border border-amber-200 shrink-0">
+                    <Activity className="w-5 h-5 sm:w-7 sm:h-7 text-amber-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider truncate">
+                      Dalam Kawasan
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-2xl sm:text-4xl font-black text-amber-700 font-mono">
+                        {activeVisitors}
+                      </h3>
+                      {activeVisitors > 0 && (
+                        <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-ping"></span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
               </div>
 
+              {/* Action and Search Bar */}
               <div className="flex flex-col">
-                <div className="bg-white/70 backdrop-blur-md p-5 rounded-t-2xl shadow-sm border border-white border-b-0 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                  <h2 className="text-lg font-bold text-slate-800 tracking-wide flex items-center gap-2">
-                    <div className="w-1.5 h-5 bg-blue-500 rounded-full"></div>
-                    Senarai Pelawat Hari Ini
-                  </h2>
-                  <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
-                    <button
-                      onClick={() => setIsScannerOpen(true)}
-                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl shadow-md shadow-blue-600/20 transition-all hover:scale-[1.02]"
-                    >
-                      <Camera className="w-4 h-4" />
-                      <span>Imbas QR Keluar</span>
-                    </button>
-                    <button
-                      onClick={handleExportCSV}
-                      disabled={visitorsToday.length === 0}
-                      className={`w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl transition-all border shadow-sm text-sm font-bold ${
-                        visitorsToday.length === 0 
-                          ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' 
-                          : 'bg-white hover:bg-blue-50 text-blue-600 border-blue-100 hover:border-blue-300'
-                      }`}
-                    >
-                      <Download className="w-4 h-4" />
-                      Eksport CSV
-                    </button>
-                    <div className="relative w-full sm:w-72">
+                <div className="bg-white/90 backdrop-blur-md p-4 sm:p-5 rounded-t-2xl shadow-xs border border-slate-200 border-b-0 flex flex-col md:flex-row justify-between items-stretch md:items-center gap-3">
+                  
+                  {/* Title & Live Status */}
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-base sm:text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
+                      <span className="w-2 h-5 bg-blue-600 rounded-full"></span>
+                      <span>Senarai Pelawat Hari Ini</span>
+                    </h2>
+
+                    <span className="md:hidden text-xs text-slate-500 font-mono">
+                      {visitorsToday.length} rekod
+                    </span>
+                  </div>
+
+                  {/* Controls: Search & Buttons */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+                    
+                    {/* Search Field */}
+                    <div className="relative flex-1 sm:w-72">
                       <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                         <Search className="h-4 w-4 text-slate-400" />
                       </div>
                       <input
                         type="text"
-                        placeholder="Cari nama, plat, IC..."
+                        placeholder="Cari nama, plat kenderaan, IC..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 bg-white/60 border border-slate-200/60 rounded-xl text-sm text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-all font-medium shadow-inner"
+                        className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-medium"
                       />
+                      {searchTerm && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchTerm('')}
+                          className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
+
+                    {/* QR Checkout Quick Button */}
+                    <button
+                      type="button"
+                      onClick={() => setIsScannerOpen(true)}
+                      className="min-h-[42px] inline-flex items-center justify-center gap-2 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm rounded-xl shadow-xs transition-all active:scale-95 shrink-0"
+                    >
+                      <Camera className="w-4 h-4" />
+                      <span>Imbas QR Keluar</span>
+                    </button>
+
+                    {/* CSV Export Button */}
+                    <button
+                      type="button"
+                      onClick={handleExportCSV}
+                      disabled={visitorsToday.length === 0}
+                      className={`min-h-[42px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl transition-all border text-xs sm:text-sm font-bold shrink-0 ${
+                        visitorsToday.length === 0 
+                          ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' 
+                          : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200 active:scale-95'
+                      }`}
+                    >
+                      <Download className="w-4 h-4 text-blue-600" />
+                      <span>Eksport CSV</span>
+                    </button>
+
                   </div>
+
                 </div>
-                <div className="flex-1 min-h-[500px]">
+
+                {/* Visitor List Component (Responsive Card + Table Views) */}
+                <div className="flex-1 min-h-[450px]">
                   <VisitorList
                     visitors={visitorsToday}
                     onCheckOut={handleCheckOut}
@@ -410,87 +705,92 @@ export default function App() {
                     onShowPass={handleShowPass}
                   />
                 </div>
+
               </div>
+
             </div>
           )}
 
-          {/* TAB 3: Analisis */}
+          {/* ========================================================= */}
+          {/* TAB 3: Analisis Pelawat (Full Screen Charts & Reports)   */}
+          {/* ========================================================= */}
           {activeTab === 'analisis' && (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-8">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
-                  <BarChart3 className="w-7 h-7 text-blue-600" />
-                  Analisis Kekerapan Pelawat
-                </h2>
-                <div className="text-xs text-slate-500 font-medium bg-white/60 px-4 py-2 rounded-xl border border-white/60 shadow-sm backdrop-blur-sm self-start sm:self-auto">
-                  Jumlah Keseluruhan Rekod: <strong className="text-slate-800 font-mono">{visitors.length}</strong> pelawat
+            <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 space-y-6 sm:space-y-8">
+              
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl sm:text-2xl font-black text-slate-900 flex items-center gap-2.5">
+                    <BarChart3 className="w-6 h-6 text-blue-600" />
+                    <span>Analisis Kekerapan Pelawat</span>
+                  </h2>
+                  <p className="text-xs text-slate-500 font-medium mt-0.5">Statistik pendaftaran pelawat di SK Morib (BBA1026)</p>
+                </div>
+
+                <div className="text-xs text-slate-600 font-semibold bg-white/90 px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs self-start sm:self-auto">
+                  Jumlah Keseluruhan Rekod: <strong className="text-blue-700 font-mono text-sm">{visitors.length}</strong> pelawat
                 </div>
               </div>
 
               {/* 7 Days Bar Chart using Recharts */}
               <VisitorAnalyticsChart visitors={visitors} />
               
-              {/* Summary Stats Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {/* Summary Stats Grid (2 cols on mobile, 4 on desktop) */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
                 
                 {/* Hari Ini */}
-                <div className="bg-white/70 backdrop-blur-md p-6 rounded-3xl shadow-sm border border-white hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex flex-col justify-center items-center gap-2">
-                  <div className="text-slate-500 font-semibold uppercase tracking-wider text-sm">Hari Ini</div>
-                  <div className="text-5xl font-black text-slate-800 font-mono">{totalToday}</div>
-                  <div className="text-xs text-slate-400 mt-2 font-medium bg-slate-100/50 px-3 py-1 rounded-full">{todayStr}</div>
+                <div className="bg-white/90 backdrop-blur-md p-4 sm:p-6 rounded-2xl shadow-xs border border-slate-200 flex flex-col justify-center items-center text-center">
+                  <div className="text-slate-500 font-bold uppercase tracking-wider text-[11px] sm:text-xs">Hari Ini</div>
+                  <div className="text-3xl sm:text-5xl font-black text-slate-900 font-mono mt-1">{totalToday}</div>
+                  <div className="text-[10px] text-slate-500 mt-1.5 font-medium bg-slate-100 px-2.5 py-0.5 rounded-full">{todayStr}</div>
                 </div>
 
                 {/* Minggu Ini */}
-                <div className="bg-white/70 backdrop-blur-md p-6 rounded-3xl shadow-sm border border-white hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex flex-col justify-center items-center gap-2">
-                  <div className="text-slate-500 font-semibold uppercase tracking-wider text-sm">Minggu Ini</div>
-                  <div className="text-5xl font-black text-blue-600 font-mono">{totalThisWeek}</div>
-                  <div className="text-xs text-slate-400 mt-2 font-medium bg-slate-100/50 px-3 py-1 rounded-full">Isnin - Ahad</div>
+                <div className="bg-white/90 backdrop-blur-md p-4 sm:p-6 rounded-2xl shadow-xs border border-slate-200 flex flex-col justify-center items-center text-center">
+                  <div className="text-slate-500 font-bold uppercase tracking-wider text-[11px] sm:text-xs">Minggu Ini</div>
+                  <div className="text-3xl sm:text-5xl font-black text-blue-600 font-mono mt-1">{totalThisWeek}</div>
+                  <div className="text-[10px] text-slate-500 mt-1.5 font-medium bg-slate-100 px-2.5 py-0.5 rounded-full">Isnin - Ahad</div>
                 </div>
 
                 {/* Bulan Ini */}
-                <div className="bg-white/70 backdrop-blur-md p-6 rounded-3xl shadow-sm border border-white hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex flex-col justify-center items-center gap-2">
-                  <div className="text-slate-500 font-semibold uppercase tracking-wider text-sm">Bulan Ini</div>
-                  <div className="text-5xl font-black text-indigo-600 font-mono">{totalThisMonth}</div>
-                  <div className="text-xs text-slate-400 mt-2 font-medium bg-slate-100/50 px-3 py-1 rounded-full">{now.toLocaleDateString('ms-MY', { month: 'long', year: 'numeric' })}</div>
+                <div className="bg-white/90 backdrop-blur-md p-4 sm:p-6 rounded-2xl shadow-xs border border-slate-200 flex flex-col justify-center items-center text-center">
+                  <div className="text-slate-500 font-bold uppercase tracking-wider text-[11px] sm:text-xs">Bulan Ini</div>
+                  <div className="text-3xl sm:text-5xl font-black text-indigo-600 font-mono mt-1">{totalThisMonth}</div>
+                  <div className="text-[10px] text-slate-500 mt-1.5 font-medium bg-slate-100 px-2.5 py-0.5 rounded-full truncate max-w-[140px]">
+                    {now.toLocaleDateString('ms-MY', { month: 'long', year: 'numeric' })}
+                  </div>
                 </div>
 
                 {/* Tahun Ini */}
-                <div className="bg-white/70 backdrop-blur-md p-6 rounded-3xl shadow-sm border border-white hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex flex-col justify-center items-center gap-2">
-                  <div className="text-slate-500 font-semibold uppercase tracking-wider text-sm">Tahun Ini</div>
-                  <div className="text-5xl font-black text-purple-600 font-mono">{totalThisYear}</div>
-                  <div className="text-xs text-slate-400 mt-2 font-medium bg-slate-100/50 px-3 py-1 rounded-full">{now.getFullYear()}</div>
+                <div className="bg-white/90 backdrop-blur-md p-4 sm:p-6 rounded-2xl shadow-xs border border-slate-200 flex flex-col justify-center items-center text-center">
+                  <div className="text-slate-500 font-bold uppercase tracking-wider text-[11px] sm:text-xs">Tahun Ini</div>
+                  <div className="text-3xl sm:text-5xl font-black text-purple-600 font-mono mt-1">{totalThisYear}</div>
+                  <div className="text-[10px] text-slate-500 mt-1.5 font-medium bg-slate-100 px-2.5 py-0.5 rounded-full">{now.getFullYear()}</div>
                 </div>
 
               </div>
               
               {/* PDF Report Generation Action Card */}
-              <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-slate-800 rounded-3xl p-6 sm:p-8 text-white shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 relative overflow-hidden">
+              <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-slate-900 rounded-3xl p-5 sm:p-8 text-white shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5 relative overflow-hidden">
                 <div className="relative z-10 max-w-xl">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-xs font-bold uppercase tracking-wider mb-3">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-[11px] font-bold uppercase tracking-wider mb-2">
                     <Printer className="w-3.5 h-3.5" />
-                    <span>Laporan Rasmi Sekolah</span>
+                    <span>Laporan Cetakan Rasmi</span>
                   </div>
-                  <h3 className="text-xl sm:text-2xl font-black tracking-tight leading-snug">
+                  <h3 className="text-lg sm:text-2xl font-black tracking-tight leading-snug">
                     Jana Laporan PDF Analisis Pelawat
                   </h3>
                   <p className="text-blue-100 text-xs sm:text-sm mt-1 leading-relaxed">
-                    Hasilkan dokumen PDF rasmi lengkap dengan analisis statistik mingguan, bulanan, atau tahunan berserta ruangan pengesahan pentadbir.
+                    Hasilkan dokumen PDF rasmi lengkap dengan analisis statistik mingguan, bulanan, atau tahunan berserta ruangan tandatangan pengesahan pentadbir.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsAdminOpen(true)}
-                  className="relative z-10 inline-flex items-center justify-center gap-2.5 px-6 py-3.5 bg-white hover:bg-blue-50 text-slate-900 hover:text-blue-700 font-bold text-sm rounded-2xl transition-all shadow-lg hover:scale-105 shrink-0"
+                  className="relative z-10 min-h-[46px] inline-flex items-center justify-center gap-2 px-5 py-3 bg-white hover:bg-blue-50 text-slate-900 hover:text-blue-700 font-bold text-xs sm:text-sm rounded-xl transition-all shadow-md active:scale-95 shrink-0"
                 >
                   <FileText className="w-4 h-4 text-blue-600" />
                   <span>Buka Penjana PDF</span>
                 </button>
-              </div>
-
-              <div className="bg-white/60 backdrop-blur-md rounded-2xl p-6 border border-white shadow-sm">
-                <p className="text-slate-500 text-sm leading-relaxed font-medium">
-                  Nota: Analisis ini memaparkan jumlah pelawat yang mendaftar masuk berdasarkan tarikh yang direkodkan ke dalam sistem. Data disunting dan disegerak bersama Google Sheets & storan tempatan.
-                </p>
               </div>
 
             </div>
@@ -498,6 +798,10 @@ export default function App() {
 
         </div>
       </main>
+
+      {/* ========================================================= */}
+      {/* MODALS & OVERLAYS                                         */}
+      {/* ========================================================= */}
 
       {/* Visitor Detail Modal */}
       <VisitorDetailModal
@@ -535,7 +839,7 @@ export default function App() {
         }}
         visitors={visitors}
         onGenerateReport={(config) => setActiveReportConfig(config)}
-        onSyncComplete={syncWithCloud}
+        onSyncComplete={() => syncWithCloud(false)}
       />
 
       {/* Printable PDF Report View */}

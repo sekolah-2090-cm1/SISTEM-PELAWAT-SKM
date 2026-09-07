@@ -1,10 +1,18 @@
 import React, { useState } from 'react';
-import { UserPlus } from 'lucide-react';
+import { UserPlus, Sparkles, Building, GraduationCap, Users, Wrench, MoreHorizontal, Check } from 'lucide-react';
 import { Visitor } from '../types';
 
 interface VisitorFormProps {
   onSubmit: (visitor: Omit<Visitor, 'id' | 'checkInTime' | 'checkOutTime' | 'status'>) => void;
 }
+
+const COMMON_PURPOSES = [
+  { id: 'Urusan Pejabat', label: 'Urusan Pejabat', icon: Building },
+  { id: 'Berjumpa Guru', label: 'Berjumpa Guru', icon: GraduationCap },
+  { id: 'Menjemput Anak', label: 'Menjemput Anak', icon: Users },
+  { id: 'Penyelenggaraan/Kontraktor', label: 'Kontraktor', icon: Wrench },
+  { id: 'Lain-lain', label: 'Lain-lain', icon: MoreHorizontal },
+];
 
 export default function VisitorForm({ onSubmit }: VisitorFormProps) {
   const [formData, setFormData] = useState({
@@ -21,11 +29,13 @@ export default function VisitorForm({ onSubmit }: VisitorFormProps) {
     
     // Use otherPurpose if "Lain-lain" is selected
     const finalData = {
-      name: formData.name,
-      icOrPassport: formData.icOrPassport,
-      phone: formData.phone,
-      vehiclePlate: formData.vehiclePlate,
-      purpose: formData.purpose === 'Lain-lain' ? formData.otherPurpose || 'Lain-lain' : formData.purpose
+      name: formData.name.trim(),
+      icOrPassport: formData.icOrPassport.trim(),
+      phone: formData.phone.trim(),
+      vehiclePlate: formData.vehiclePlate.trim().toUpperCase(),
+      purpose: formData.purpose === 'Lain-lain' 
+        ? (formData.otherPurpose.trim() || 'Lain-lain') 
+        : (formData.purpose || 'Urusan Am')
     };
 
     onSubmit(finalData);
@@ -40,114 +50,160 @@ export default function VisitorForm({ onSubmit }: VisitorFormProps) {
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: name === 'vehiclePlate' ? value.toUpperCase() : value
+    }));
+  };
+
+  const handlePurposeSelect = (purposeVal: string) => {
+    setFormData(prev => ({
+      ...prev,
+      purpose: purposeVal,
+      otherPurpose: purposeVal !== 'Lain-lain' ? '' : prev.otherPurpose
+    }));
   };
 
   return (
-    <div className="bg-white/70 backdrop-blur-md rounded-2xl shadow-sm hover:shadow-xl border border-white hover:scale-[1.01] transition-all duration-300 overflow-hidden relative group">
-      <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"></div>
-      <div className="bg-white/40 px-6 py-5 border-b border-white/50 flex items-center gap-3 relative backdrop-blur-sm z-10">
-        <UserPlus className="text-blue-600 w-6 h-6 drop-shadow-sm" />
-        <h2 className="text-xl font-bold text-slate-800 tracking-tight">Pendaftaran Pelawat Baru</h2>
+    <div className="bg-white/85 backdrop-blur-md rounded-2xl shadow-sm border border-white overflow-hidden relative">
+      <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-5 sm:px-6 py-4 flex items-center justify-between text-white">
+        <div className="flex items-center gap-2.5">
+          <div className="p-2 bg-white/20 rounded-xl backdrop-blur-xs">
+            <UserPlus className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h2 className="text-lg sm:text-xl font-bold tracking-tight">Pendaftaran Pelawat Baru</h2>
+            <p className="text-xs text-blue-100 hidden sm:block">Sila lengkapkan butiran pelawat untuk rekod keselamatan</p>
+          </div>
+        </div>
+        <span className="text-[11px] font-bold bg-white/20 px-2.5 py-1 rounded-full uppercase tracking-wider font-mono">
+          BBA1026
+        </span>
       </div>
       
-      <form onSubmit={handleSubmit} className="p-6 space-y-6 relative z-10">
+      <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-5">
+        {/* Nama Penuh */}
         <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-2">Nama Penuh</label>
+          <label className="block text-xs sm:text-sm font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
+            Nama Penuh Pelawat <span className="text-rose-500">*</span>
+          </label>
           <input
             required
             type="text"
             name="name"
             value={formData.name}
             onChange={handleChange}
-            className="w-full px-4 py-3 bg-white/60 border border-slate-200/60 rounded-xl focus:ring-2 focus:ring-blue-400 focus:border-blue-400 focus:bg-white transition-all text-slate-800 placeholder-slate-400 font-medium shadow-inner"
+            className="w-full px-4 py-3 sm:py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-all text-slate-900 placeholder-slate-400 font-medium text-base sm:text-sm"
             placeholder="Contoh: Ahmad bin Abu"
+            autoComplete="name"
           />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* IC & Phone Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-2">No. KP / Pasport</label>
+            <label className="block text-xs sm:text-sm font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
+              No. KP / Pasport <span className="text-rose-500">*</span>
+            </label>
             <input
               required
               type="text"
               name="icOrPassport"
               value={formData.icOrPassport}
               onChange={handleChange}
-              className="w-full px-4 py-3 bg-white/60 border border-slate-200/60 rounded-xl focus:ring-2 focus:ring-blue-400 focus:border-blue-400 focus:bg-white transition-all text-slate-800 placeholder-slate-400 font-medium shadow-inner"
+              className="w-full px-4 py-3 sm:py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-all text-slate-900 placeholder-slate-400 font-mono text-base sm:text-sm"
               placeholder="Contoh: 801210-10-1234"
+              inputMode="text"
             />
           </div>
           <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-2">No. Telefon</label>
+            <label className="block text-xs sm:text-sm font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
+              No. Telefon Bimbit <span className="text-rose-500">*</span>
+            </label>
             <input
               required
               type="tel"
               name="phone"
               value={formData.phone}
               onChange={handleChange}
-              className="w-full px-4 py-3 bg-white/60 border border-slate-200/60 rounded-xl focus:ring-2 focus:ring-blue-400 focus:border-blue-400 focus:bg-white transition-all text-slate-800 placeholder-slate-400 font-medium shadow-inner"
+              className="w-full px-4 py-3 sm:py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-all text-slate-900 placeholder-slate-400 font-mono text-base sm:text-sm"
               placeholder="Contoh: 012-3456789"
+              inputMode="tel"
+              autoComplete="tel"
             />
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Vehicle Plate & Purpose Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-2">No. Kenderaan (Jika Ada)</label>
+            <label className="block text-xs sm:text-sm font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
+              No. Pendaftaran Kenderaan <span className="text-slate-400 font-normal lowercase">(jika bawa kenderaan)</span>
+            </label>
             <input
               type="text"
               name="vehiclePlate"
               value={formData.vehiclePlate}
               onChange={handleChange}
-              className="w-full px-4 py-3 bg-white/60 border border-slate-200/60 rounded-xl focus:ring-2 focus:ring-blue-400 focus:border-blue-400 focus:bg-white transition-all text-slate-800 placeholder-slate-400 font-medium uppercase shadow-inner"
-              placeholder="Contoh: JAB 1234"
+              className="w-full px-4 py-3 sm:py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-all text-slate-900 placeholder-slate-400 font-mono uppercase text-base sm:text-sm font-bold tracking-wider"
+              placeholder="Contoh: WXY 1234 (atau biarkan kosong)"
             />
           </div>
-          <div className="flex flex-col gap-3">
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Tujuan Lawatan</label>
-              <select
-                required
-                name="purpose"
-                value={formData.purpose}
-                onChange={handleChange}
-                className="w-full px-4 py-3 bg-white/60 border border-slate-200/60 rounded-xl focus:ring-2 focus:ring-blue-400 focus:border-blue-400 focus:bg-white transition-all text-slate-800 font-medium shadow-inner"
-              >
-                <option value="" disabled className="text-slate-500">Pilih Tujuan...</option>
-                <option value="Urusan Pejabat">Urusan Pejabat</option>
-                <option value="Berjumpa Guru">Berjumpa Guru</option>
-                <option value="Menjemput Anak">Menjemput Anak (Kecemasan)</option>
-                <option value="Penyelenggaraan/Kontraktor">Penyelenggaraan / Kontraktor</option>
-                <option value="Lain-lain">Lain-lain</option>
-              </select>
+
+          <div>
+            <label className="block text-xs sm:text-sm font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
+              Tujuan Lawatan <span className="text-rose-500">*</span>
+            </label>
+            {/* Quick Touch Chips for Mobile */}
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {COMMON_PURPOSES.map(cp => {
+                const Icon = cp.icon;
+                const isSelected = formData.purpose === cp.id;
+                return (
+                  <button
+                    key={cp.id}
+                    type="button"
+                    onClick={() => handlePurposeSelect(cp.id)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all active:scale-95 ${
+                      isSelected 
+                        ? 'bg-blue-600 text-white shadow-xs' 
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{cp.label}</span>
+                    {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                  </button>
+                );
+              })}
             </div>
-            
+
+            {/* If Lain-lain selected or custom entry */}
             {formData.purpose === 'Lain-lain' && (
-              <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className="animate-in fade-in slide-in-from-top-1 duration-200">
                 <input
                   required
                   type="text"
                   name="otherPurpose"
                   value={formData.otherPurpose}
                   onChange={handleChange}
-                  className="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-all text-slate-800 placeholder-slate-400 font-medium shadow-sm"
-                  placeholder="Sila nyatakan tujuan..."
+                  className="w-full px-4 py-3 sm:py-2.5 bg-white border-2 border-blue-400 rounded-xl focus:ring-2 focus:ring-blue-500 transition-all text-slate-900 placeholder-slate-400 text-base sm:text-sm"
+                  placeholder="Sila nyatakan tujuan lawatan di sini..."
+                  autoFocus
                 />
               </div>
             )}
           </div>
         </div>
 
+        {/* Submit Action Button */}
         <button
           type="submit"
-          className="w-full mt-6 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white font-bold py-3.5 px-4 rounded-xl transition-all shadow-md hover:shadow-xl hover:-translate-y-0.5 flex justify-center items-center gap-2 border border-blue-400/30"
+          className="w-full min-h-[50px] bg-gradient-to-r from-blue-600 via-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-[0.99] text-white font-bold py-3.5 px-5 rounded-xl transition-all shadow-md hover:shadow-lg flex justify-center items-center gap-2.5 text-base"
         >
-          <UserPlus className="w-5 h-5" />
-          Daftar Masuk Pelawat
+          <UserPlus className="w-5 h-5 stroke-[2.5]" />
+          <span>Daftar Masuk Pelawat Sekarang</span>
         </button>
       </form>
     </div>
