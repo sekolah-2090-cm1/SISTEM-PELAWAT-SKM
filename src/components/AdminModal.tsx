@@ -367,14 +367,14 @@ export default function AdminModal({
       />
 
       {/* Modal Box */}
-      <div className="relative w-full max-w-3xl max-h-[92vh] overflow-y-auto bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white p-5 sm:p-8 z-10 animate-in fade-in zoom-in-95 duration-200">
+      <div className="relative w-full max-w-3xl max-h-[92vh] sm:max-h-[88vh] flex flex-col bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white overflow-hidden z-10 animate-in fade-in zoom-in-95 duration-200">
         
         {/* Glow Accent */}
         <div className="absolute top-0 right-0 w-80 h-80 bg-blue-300/20 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20"></div>
 
         {/* --- STATE 1: PASSWORD LOGIN SCREEN --- */}
         {!isAuthenticated ? (
-          <div className="py-4 relative z-10">
+          <div className="p-5 sm:p-8 flex-1 overflow-y-auto relative z-10">
             <div className="flex items-start justify-between pb-5 border-b border-slate-200/80 mb-6">
               <div className="flex items-center gap-3.5">
                 <div className="p-3 bg-slate-900 text-white rounded-2xl shadow-md shadow-slate-900/20">
@@ -454,22 +454,22 @@ export default function AdminModal({
           /* --- STATE 2: AUTHENTICATED ADMIN DASHBOARD --- */
           <>
             {/* Modal Header */}
-            <div className="flex items-start justify-between pb-5 border-b border-slate-200/80 relative z-10">
-              <div className="flex items-center gap-3.5">
-                <div className="p-3 bg-blue-600 text-white rounded-2xl shadow-md shadow-blue-500/20">
-                  <ShieldCheck className="w-6 h-6" />
+            <div className="flex items-start justify-between p-4 sm:p-6 pb-3 sm:pb-4 border-b border-slate-200/80 shrink-0 relative z-10">
+              <div className="flex items-center gap-3 sm:gap-3.5">
+                <div className="p-2.5 sm:p-3 bg-blue-600 text-white rounded-2xl shadow-md shadow-blue-500/20 shrink-0">
+                  <ShieldCheck className="w-5 h-5 sm:w-6 sm:h-6" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h3 className="text-xl sm:text-2xl font-bold text-slate-800 tracking-tight">Panel Pentadbir SK Morib</h3>
-                    <span className="px-2.5 py-0.5 bg-emerald-100 text-emerald-800 font-bold text-[10px] uppercase rounded-full tracking-wider border border-emerald-200">
+                    <h3 className="text-lg sm:text-2xl font-bold text-slate-800 tracking-tight">Panel Pentadbir SK Morib</h3>
+                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 font-bold text-[10px] uppercase rounded-full tracking-wider border border-emerald-200">
                       Disahkan
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500 font-medium mt-0.5">Jana laporan PDF rasmi, selaras Google Sheets, dan tukar kata laluan</p>
+                  <p className="text-xs text-slate-500 font-medium mt-0.5 hidden sm:block">Jana laporan PDF rasmi, selaras Google Sheets, dan tukar kata laluan</p>
                 </div>
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   onClick={handleLogout}
                   className="p-2 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors text-xs font-semibold inline-flex items-center gap-1.5"
@@ -487,60 +487,65 @@ export default function AdminModal({
               </div>
             </div>
 
-            {/* Tab Navigation */}
-            <div className="flex flex-wrap gap-2 my-5 p-1.5 bg-slate-100/80 rounded-2xl border border-slate-200/60 relative z-10">
-              <button
-                onClick={() => setActiveAdminTab('sheets')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all ${
-                  activeAdminTab === 'sheets'
-                    ? 'bg-white text-emerald-600 shadow-sm border border-slate-200/60'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
-              >
-                <Table className="w-4 h-4" />
-                <span>Google Sheets</span>
-              </button>
+            {/* Tab Navigation - Responsive 2x2 grid on mobile, 4 in a row on tablet/laptop */}
+            <div className="p-2 sm:px-6 bg-slate-50/90 border-b border-slate-200/60 shrink-0 relative z-10">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2 bg-slate-200/60 p-1.5 rounded-2xl">
+                <button
+                  onClick={() => setActiveAdminTab('sheets')}
+                  className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 sm:py-2.5 px-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                    activeAdminTab === 'sheets'
+                      ? 'bg-white text-emerald-600 shadow-sm border border-slate-200/60'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+                  }`}
+                >
+                  <Table className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Google Sheets</span>
+                </button>
 
-              <button
-                onClick={() => setActiveAdminTab('pdf')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all ${
-                  activeAdminTab === 'pdf'
-                    ? 'bg-white text-blue-600 shadow-sm border border-slate-200/60'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
-              >
-                <Printer className="w-4 h-4" />
-                <span>Jana PDF</span>
-              </button>
+                <button
+                  onClick={() => setActiveAdminTab('pdf')}
+                  className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 sm:py-2.5 px-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                    activeAdminTab === 'pdf'
+                      ? 'bg-white text-blue-600 shadow-sm border border-slate-200/60'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+                  }`}
+                >
+                  <Printer className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Jana PDF</span>
+                </button>
 
-              <button
-                onClick={() => setActiveAdminTab('export')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all ${
-                  activeAdminTab === 'export'
-                    ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/60'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
-              >
-                <Download className="w-4 h-4" />
-                <span>Eksport Data</span>
-              </button>
+                <button
+                  onClick={() => setActiveAdminTab('export')}
+                  className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 sm:py-2.5 px-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                    activeAdminTab === 'export'
+                      ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/60'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+                  }`}
+                >
+                  <Download className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Eksport Data</span>
+                </button>
 
-              <button
-                onClick={() => setActiveAdminTab('security')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all ${
-                  activeAdminTab === 'security'
-                    ? 'bg-white text-amber-600 shadow-sm border border-slate-200/60'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
-              >
-                <KeyRound className="w-4 h-4" />
-                <span>Kata Laluan</span>
-              </button>
+                <button
+                  onClick={() => setActiveAdminTab('security')}
+                  className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 sm:py-2.5 px-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                    activeAdminTab === 'security'
+                      ? 'bg-white text-amber-600 shadow-sm border border-slate-200/60'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+                  }`}
+                >
+                  <KeyRound className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Kata Laluan</span>
+                </button>
+              </div>
             </div>
+
+            {/* Main Tabs Content - Single Clean Scrollable Container */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 relative z-10">
 
             {/* Tab 1: Pangkalan Data Google Sheets */}
             {activeAdminTab === 'sheets' && (
-              <div className="space-y-4 max-h-[58vh] overflow-y-auto pr-1 relative z-10 animate-in fade-in duration-150">
+              <div className="space-y-4 relative z-10 animate-in fade-in duration-150">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
                     Google Apps Script Web App URL
@@ -655,7 +660,7 @@ export default function AdminModal({
 
             {/* Tab 2: Jana Laporan PDF */}
             {activeAdminTab === 'pdf' && (
-              <div className="space-y-5 max-h-[55vh] overflow-y-auto pr-1 relative z-10 animate-in fade-in duration-150">
+              <div className="space-y-5 relative z-10 animate-in fade-in duration-150">
                 {/* Report Type Selector */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5">
@@ -860,7 +865,7 @@ export default function AdminModal({
 
             {/* Tab 3: Eksport Data */}
             {activeAdminTab === 'export' && (
-              <div className="space-y-5 max-h-[55vh] overflow-y-auto pr-1 relative z-10 animate-in fade-in duration-150">
+              <div className="space-y-5 relative z-10 animate-in fade-in duration-150">
                 <div className="p-5 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-4">
                   <div className="flex items-center gap-3">
                     <div className="p-3 bg-indigo-100 text-indigo-700 rounded-xl">
@@ -889,7 +894,7 @@ export default function AdminModal({
 
             {/* Tab 4: Tukar Kata Laluan */}
             {activeAdminTab === 'security' && (
-              <div className="space-y-4 max-h-[55vh] overflow-y-auto pr-1 relative z-10 animate-in fade-in duration-150">
+              <div className="space-y-4 relative z-10 animate-in fade-in duration-150">
                 <form onSubmit={handleChangePassword} className="bg-slate-50 p-5 rounded-2xl border border-slate-200/80 space-y-4">
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-800 border-b border-slate-200 pb-2.5">
                     <KeyRound className="w-4 h-4 text-amber-600" />
@@ -961,13 +966,15 @@ export default function AdminModal({
               </div>
             )}
 
-            {/* Footer */}
-            <div className="mt-6 pt-4 border-t border-slate-200/70 flex items-center justify-between relative z-10">
-              <span className="text-[11px] text-slate-400 font-mono">SK MORIB (BBA1026) ADMIN ACCESS</span>
+            </div>
+
+            {/* Pinned/Sticky Modal Footer - Always visible on all devices */}
+            <div className="p-3 sm:px-6 bg-slate-50 border-t border-slate-200/80 flex items-center justify-between shrink-0 relative z-10">
+              <span className="text-[11px] text-slate-500 font-mono">SK MORIB (BBA1026) ADMIN ACCESS</span>
               <button
                 type="button"
                 onClick={onClose}
-                className="px-6 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-xl transition-all shadow-sm"
+                className="px-6 py-2.5 bg-slate-800 hover:bg-slate-900 active:bg-slate-950 text-white font-semibold text-xs sm:text-sm rounded-xl transition-all shadow-sm active:scale-95 min-h-[42px]"
               >
                 Tutup
               </button>

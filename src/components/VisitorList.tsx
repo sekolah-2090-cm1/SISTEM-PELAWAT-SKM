@@ -201,10 +201,11 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
                           e.stopPropagation();
                           onShowPass(visitor);
                         }}
-                        className="flex-1 inline-flex items-center justify-center gap-1.5 min-h-[44px] px-3 bg-slate-100 hover:bg-blue-50 text-slate-800 hover:text-blue-700 font-bold text-xs rounded-xl border border-slate-200 transition-all active:scale-95"
+                        className="flex-1 min-w-0 inline-flex items-center justify-center gap-1.5 min-h-[44px] px-3 bg-slate-100 hover:bg-blue-50 active:bg-blue-100 text-slate-800 hover:text-blue-700 font-bold text-xs rounded-xl border border-slate-200 transition-all active:scale-95 whitespace-nowrap"
+                        title="Papar Pas QR"
                       >
-                        <QrCode className="w-4 h-4 text-blue-600" />
-                        <span>Pas QR</span>
+                        <QrCode className="w-4 h-4 text-blue-600 shrink-0" />
+                        <span className="truncate">Pas QR</span>
                       </button>
                     )}
 
@@ -215,13 +216,14 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
                           e.stopPropagation();
                           onCheckOut(visitor.id);
                         }}
-                        className="flex-2 inline-flex items-center justify-center gap-2 min-h-[44px] px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all active:scale-95"
+                        className="flex-[1.4] min-w-0 inline-flex items-center justify-center gap-2 min-h-[44px] px-3.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all active:scale-95 whitespace-nowrap"
+                        title="Daftar keluar pelawat"
                       >
-                        <LogOut className="w-4 h-4" />
-                        <span>Daftar Keluar</span>
+                        <LogOut className="w-4 h-4 shrink-0" />
+                        <span className="truncate">Daftar Keluar</span>
                       </button>
                     ) : (
-                      <div className="flex-1 min-h-[44px] flex items-center justify-center text-slate-400 text-xs font-semibold bg-slate-50 rounded-xl border border-slate-200/50">
+                      <div className="flex-1 min-w-0 min-h-[44px] flex items-center justify-center text-slate-400 text-xs font-semibold bg-slate-50 rounded-xl border border-slate-200/50">
                         Lawatan Selesai
                       </div>
                     )}
@@ -232,17 +234,20 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
           </div>
 
           {/* ========================================================= */}
-          {/* 2. DESKTOP / TABLET TABLE VIEW (Clean multi-column layout) */}
+          {/* 2. DESKTOP / TABLET TABLE VIEW (Sticky action buttons)    */}
           {/* ========================================================= */}
           <div className={`overflow-x-auto relative z-10 ${showTable ? (viewMode === 'table' ? 'block' : 'hidden md:block') : 'hidden'}`}>
             <table className="w-full text-left text-sm whitespace-nowrap">
-              <thead className="bg-slate-50/80 border-b border-slate-200 text-slate-700 font-semibold tracking-wide uppercase text-xs">
+              <thead className="bg-slate-50/90 border-b border-slate-200 text-slate-700 font-semibold tracking-wide uppercase text-xs">
                 <tr>
-                  <th className="px-6 py-4">Nama &amp; Maklumat Pelawat</th>
-                  <th className="px-6 py-4">Tujuan Lawatan</th>
-                  <th className="px-6 py-4">Masa Masuk</th>
-                  <th className="px-6 py-4">Status Kawasan</th>
-                  <th className="px-6 py-4 text-right">Tindakan Pantas</th>
+                  <th className="px-4 sm:px-6 py-3.5">Nama &amp; Maklumat Pelawat</th>
+                  <th className="px-4 sm:px-6 py-3.5">Tujuan Lawatan</th>
+                  <th className="px-4 sm:px-6 py-3.5">Masa Masuk</th>
+                  <th className="px-4 sm:px-6 py-3.5">Status Kawasan</th>
+                  {/* Sticky right column so actions are NEVER hidden on any laptop or small screen */}
+                  <th className="px-4 sm:px-6 py-3.5 text-right sticky right-0 bg-slate-50/95 backdrop-blur-xs shadow-[-6px_0_10px_-4px_rgba(0,0,0,0.06)] z-20">
+                    Tindakan Pantas
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -255,7 +260,7 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
                       className="hover:bg-blue-50/50 transition-colors group/row cursor-pointer"
                       title="Klik untuk lihat butiran penuh &amp; sejarah pelawat"
                     >
-                      <td className="px-6 py-4">
+                      <td className="px-4 sm:px-6 py-3.5">
                         <div className="font-bold text-slate-900 flex items-center gap-2">
                           <span>{visitor.name}</span>
                           <span className="text-[11px] text-blue-600 font-normal opacity-0 group-hover/row:opacity-100 transition-opacity">
@@ -282,16 +287,16 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
                           )}
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-slate-700 font-medium max-w-xs truncate">
+                      <td className="px-4 sm:px-6 py-3.5 text-slate-700 font-medium max-w-xs truncate">
                         {visitor.purpose}
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-4 sm:px-6 py-3.5">
                         <div className="flex items-center gap-2 text-slate-600 font-mono">
                           <Clock className="w-4 h-4 text-slate-400" />
                           <span>{formatTime(visitor.checkInTime)}</span>
                         </div>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-4 sm:px-6 py-3.5">
                         {isActive ? (
                           <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300 shadow-xs uppercase tracking-wider">
                             <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shadow-[0_0_8px_rgba(245,158,11,0.8)]"></span>
@@ -304,7 +309,8 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
                           </span>
                         )}
                       </td>
-                      <td className="px-6 py-4 text-right">
+                      {/* Sticky Right Column for Actions */}
+                      <td className="px-4 sm:px-6 py-3.5 text-right sticky right-0 bg-white/95 group-hover/row:bg-blue-50/95 backdrop-blur-xs shadow-[-6px_0_10px_-4px_rgba(0,0,0,0.06)] z-10">
                         <div className="flex items-center justify-end gap-2">
                           {onShowPass && (
                             <button
@@ -326,7 +332,8 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
                                 e.stopPropagation();
                                 onCheckOut(visitor.id);
                               }}
-                              className="inline-flex items-center gap-2 px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-xl transition-all shadow-xs active:scale-95"
+                              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-bold text-xs rounded-xl transition-all shadow-xs active:scale-95"
+                              title="Daftar keluar sekarang"
                             >
                               <LogOut className="w-3.5 h-3.5" />
                               <span>Daftar Keluar</span>

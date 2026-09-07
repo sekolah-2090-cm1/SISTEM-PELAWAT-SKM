@@ -309,29 +309,29 @@ export default function QRScannerModal({
       />
 
       {/* Main Scanner Container */}
-      <div className="relative w-full max-w-xl bg-slate-900 text-white rounded-3xl shadow-2xl border border-slate-800 overflow-hidden z-10 animate-in fade-in zoom-in-95 duration-200">
+      <div className="relative w-full max-w-xl max-h-[92vh] sm:max-h-[88vh] flex flex-col bg-slate-900 text-white rounded-3xl shadow-2xl border border-slate-800 overflow-hidden z-10 animate-in fade-in zoom-in-95 duration-200">
         
         {/* Hidden Canvas for QR decoding */}
         <canvas ref={canvasRef} className="hidden" />
 
         {/* Top Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-900/90 backdrop-blur-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-blue-600/20 text-blue-400 rounded-xl border border-blue-500/30">
+        <div className="flex items-center justify-between px-4 sm:px-5 py-3.5 sm:py-4 border-b border-slate-800 bg-slate-900/95 backdrop-blur-sm shrink-0">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <div className="p-2 sm:p-2.5 bg-blue-600/20 text-blue-400 rounded-xl border border-blue-500/30 shrink-0">
               <QrCode className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-bold text-base text-white tracking-tight">Pengimbas Pas Pelawat QR</h3>
+                <h3 className="font-bold text-sm sm:text-base text-white tracking-tight">Pengimbas Pas Pelawat QR</h3>
                 <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 text-[10px] font-bold uppercase rounded-full border border-emerald-500/30">
-                  Kamera Aktif
+                  Kamera
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">Imbas kod QR pada pas untuk daftar keluar automatik</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               onClick={() => setSoundEnabled(!soundEnabled)}
               className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors"
@@ -348,14 +348,14 @@ export default function QRScannerModal({
           </div>
         </div>
 
-        {/* --- SCANNER VIEWPORT OR RESULT CARD --- */}
-        <div className="p-5 sm:p-6 space-y-4">
+        {/* --- SCANNER VIEWPORT OR RESULT CARD (Scrollable Body) --- */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
           
           {/* STATE 1: ACTIVE SCANNER VIEW */}
           {isScanning && (
             <div className="space-y-4">
               {/* Video Viewport Box */}
-              <div className="relative w-full aspect-square sm:aspect-[4/3] bg-black rounded-2xl overflow-hidden border-2 border-slate-700 shadow-inner flex items-center justify-center">
+              <div className="relative w-full max-h-[280px] sm:max-h-[340px] aspect-[4/3] bg-black rounded-2xl overflow-hidden border-2 border-slate-700 shadow-inner flex items-center justify-center">
                 
                 {/* Real-time Video stream */}
                 <video
@@ -368,9 +368,9 @@ export default function QRScannerModal({
 
                 {/* Animated Scanner Reticle Overlay */}
                 {hasCameraPermission && (
-                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-6">
+                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-4 sm:p-6">
                     {/* Viewfinder Target Box */}
-                    <div className="relative w-64 h-64 sm:w-72 sm:h-72 border-2 border-blue-400/60 rounded-3xl overflow-hidden shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]">
+                    <div className="relative w-48 h-48 sm:w-60 sm:h-60 border-2 border-blue-400/60 rounded-3xl overflow-hidden shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]">
                       
                       {/* Corner Accents */}
                       <div className="absolute top-0 left-0 w-7 h-7 border-t-4 border-l-4 border-blue-400 rounded-tl-2xl"></div>
@@ -631,7 +631,7 @@ export default function QRScannerModal({
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-500">
+        <div className="px-5 py-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-500 shrink-0">
           <span>SK MORIB PONDOK KAWALAN</span>
           <span>Tekan ESC atau Tutup untuk keluar</span>
         </div>

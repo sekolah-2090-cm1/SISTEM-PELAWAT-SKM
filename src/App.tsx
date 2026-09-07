@@ -468,8 +468,8 @@ export default function App() {
                 title="Buka Panel Pentadbir: Jana PDF & Sambungan Google Sheets"
               >
                 <Lock className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                <span className="hidden xs:inline">Pentadbir</span>
-                <span className="xs:hidden">Admin</span>
+                <span className="hidden sm:inline">Pentadbir</span>
+                <span className="sm:hidden">Admin</span>
                 {hasSheetConfig ? (
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
                 ) : (
