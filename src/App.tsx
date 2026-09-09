@@ -109,6 +109,8 @@ export default function App() {
   }, []);
 
   // Multi-device Cloud Sync Engine (Supabase Real-Time + Google Sheets)
+  const isAutoUploadingToSupabase = useRef(false);
+
   const syncWithCloud = useCallback(async (silent = false) => {
     const isSupabase = isSupabaseConfigured();
     setHasSupabaseConfig(isSupabase);
@@ -130,6 +132,33 @@ export default function App() {
       }
 
       if (cloudVisitors && Array.isArray(cloudVisitors)) {
+        // AUTO-MIGRATE: If this device has local visitors that are not yet in Supabase
+        // (e.g. 17 records recorded on laptop before Supabase was connected),
+        // automatically push them up to Supabase so the phone and all other devices receive them!
+        if (isSupabase && visitorsRef.current.length > 0 && !isAutoUploadingToSupabase.current) {
+          const missingInCloud = visitorsRef.current.filter(
+            (local) => !cloudVisitors!.some((cloud) => String(cloud.id) === String(local.id))
+          );
+
+          if (missingInCloud.length > 0) {
+            isAutoUploadingToSupabase.current = true;
+            console.log(`Auto-uploading ${missingInCloud.length} local visitors to Supabase...`);
+            try {
+              for (const v of missingInCloud) {
+                await addVisitorToSupabase(v);
+              }
+              const freshCloud = await fetchVisitorsFromSupabase();
+              if (freshCloud) {
+                cloudVisitors = freshCloud;
+              }
+            } catch (upErr) {
+              console.warn('Auto-upload to Supabase failed:', upErr);
+            } finally {
+              isAutoUploadingToSupabase.current = false;
+            }
+          }
+        }
+
         // Smart merge resolves cross-device updates without wiping recent local inputs
         const merged = mergeVisitors(visitorsRef.current, cloudVisitors);
         const sanitized = sanitizeVisitorsList(merged);
@@ -636,9 +665,9 @@ export default function App() {
             <ClipboardList className="w-4 h-4 shrink-0" />
             <span>Senarai</span>
             <span className="hidden sm:inline">Terkini</span>
-            {activeVisitors > 0 && (
-              <span className="px-2 py-0.5 bg-amber-500 text-white text-[10px] font-black rounded-full font-mono shadow-xs">
-                {activeVisitors}
+            {visitors.length > 0 && (
+              <span className="px-2 py-0.5 bg-blue-600 text-white text-[10px] font-black rounded-full font-mono shadow-xs">
+                {visitors.length}
               </span>
             )}
           </button>
