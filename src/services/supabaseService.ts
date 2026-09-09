@@ -195,11 +195,47 @@ export async function fetchVisitorsFromSupabase(): Promise<Visitor[] | null> {
   }
 }
 
+export function toSafePostgresTimestamp(dateStr?: string | null | Date): string | null {
+  if (!dateStr) return null;
+  if (dateStr instanceof Date) {
+    return isNaN(dateStr.getTime()) ? new Date().toISOString() : dateStr.toISOString();
+  }
+  const str = String(dateStr).trim();
+  if (!str) return null;
+
+  // Direct ISO parse
+  const direct = new Date(str);
+  if (!isNaN(direct.getTime())) {
+    return direct.toISOString();
+  }
+
+  // Handle DD/MM/YYYY or DD-MM-YYYY formats commonly used in Malaysia
+  const ddmmyyyyMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+|,\s*)?(\d{1,2})?:?(\d{1,2})?:?(\d{1,2})?/);
+  if (ddmmyyyyMatch) {
+    const day = parseInt(ddmmyyyyMatch[1], 10);
+    const month = parseInt(ddmmyyyyMatch[2], 10) - 1;
+    const year = parseInt(ddmmyyyyMatch[3], 10);
+    const hours = ddmmyyyyMatch[4] ? parseInt(ddmmyyyyMatch[4], 10) : 0;
+    const minutes = ddmmyyyyMatch[5] ? parseInt(ddmmyyyyMatch[5], 10) : 0;
+    const seconds = ddmmyyyyMatch[6] ? parseInt(ddmmyyyyMatch[6], 10) : 0;
+
+    const parsed = new Date(year, month, day, hours, minutes, seconds);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+
+  return new Date().toISOString();
+}
+
 export async function addVisitorToSupabase(visitor: Visitor): Promise<boolean> {
   const client = getSupabaseClient();
   if (!client) return false;
 
   try {
+    const safeCheckIn = toSafePostgresTimestamp(visitor.checkInTime) || new Date().toISOString();
+    const safeCheckOut = toSafePostgresTimestamp(visitor.checkOutTime);
+
     const { error } = await client.from('visitors').upsert(
       {
         id: visitor.id,
@@ -208,8 +244,8 @@ export async function addVisitorToSupabase(visitor: Visitor): Promise<boolean> {
         phone: visitor.phone,
         vehicle_plate: visitor.vehiclePlate || '-',
         purpose: visitor.purpose,
-        check_in_time: visitor.checkInTime,
-        check_out_time: visitor.checkOutTime || null,
+        check_in_time: safeCheckIn,
+        check_out_time: safeCheckOut,
         status: visitor.status || 'ACTIVE',
       },
       { onConflict: 'id' }
@@ -231,10 +267,11 @@ export async function checkOutVisitorInSupabase(id: string, checkOutTime: string
   if (!client) return false;
 
   try {
+    const safeCheckOut = toSafePostgresTimestamp(checkOutTime) || new Date().toISOString();
     const { error } = await client
       .from('visitors')
       .update({
-        check_out_time: checkOutTime,
+        check_out_time: safeCheckOut,
         status: 'CHECKED_OUT',
       })
       .eq('id', id);

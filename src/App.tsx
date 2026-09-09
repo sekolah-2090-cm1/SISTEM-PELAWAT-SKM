@@ -48,29 +48,53 @@ import {
   subscribeToVisitorChanges
 } from './services/supabaseService';
 
-// Helper to guarantee unique IDs across any visitor list
+// Helper to guarantee unique IDs and strictly deduplicate visitors list
 function sanitizeVisitorsList(list: any[]): Visitor[] {
   if (!Array.isArray(list)) return [];
   const seenIds = new Set<string>();
-  return list.map((item: any, index: number) => {
-    let rawId = item?.id ? String(item.id).trim() : '';
-    if (!rawId || seenIds.has(rawId)) {
-      rawId = rawId ? `${rawId}_${index}_${crypto.randomUUID().slice(0, 4)}` : crypto.randomUUID();
-    }
-    seenIds.add(rawId);
+  const seenSignatures = new Set<string>();
+  const result: Visitor[] = [];
 
-    return {
-      id: rawId,
-      name: String(item?.name || ''),
+  for (let index = 0; index < list.length; index++) {
+    const item = list[index];
+    if (!item) continue;
+    const name = String(item?.name || '').trim();
+    if (!name) continue;
+
+    const rawId = item?.id ? String(item.id).trim() : '';
+    // Skip duplicate IDs directly - NEVER mutate into random UUIDs!
+    if (rawId && seenIds.has(rawId)) {
+      continue;
+    }
+
+    const checkIn = String(item?.checkInTime || new Date().toISOString());
+    const ic = String(item?.icOrPassport || '').trim().toLowerCase();
+    // Signature: same name + same IC + check-in within 10-minute block
+    const sigTime = checkIn.slice(0, 15);
+    const sig = `${name.toLowerCase()}_${ic}_${sigTime}`;
+    if (seenSignatures.has(sig)) {
+      // It's a duplicate check-in record - drop it!
+      continue;
+    }
+
+    const finalId = rawId || `v_${name}_${ic}_${index}`;
+    seenIds.add(finalId);
+    seenSignatures.add(sig);
+
+    result.push({
+      id: finalId,
+      name: name,
       icOrPassport: String(item?.icOrPassport || ''),
-      phone: String(item?.phone || ''),
+      phone: String(item?.phone || '').replace(/^'/, ''),
       vehiclePlate: String(item?.vehiclePlate || ''),
       purpose: String(item?.purpose || ''),
-      checkInTime: String(item?.checkInTime || new Date().toISOString()),
+      checkInTime: checkIn,
       checkOutTime: item?.checkOutTime ? String(item.checkOutTime) : null,
       status: item?.status === 'CHECKED_OUT' ? 'CHECKED_OUT' : 'ACTIVE',
-    };
-  });
+    });
+  }
+
+  return result;
 }
 
 export default function App() {
@@ -91,6 +115,7 @@ export default function App() {
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [activeReportConfig, setActiveReportConfig] = useState<ReportConfig | null>(null);
+  const [cleanedDuplicatesCount, setCleanedDuplicatesCount] = useState<number>(0);
   
   // QR Scanner & Visitor Pass Modals
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -128,18 +153,31 @@ export default function App() {
       if (isSupabase) {
         cloudVisitors = await fetchVisitorsFromSupabase();
 
-        // If Supabase is empty (0 records), check if Google Sheets has the records (e.g. 17 records)
-        // and automatically populate Supabase with them so all phones and devices receive them instantly!
-        if (isSheet && (!cloudVisitors || cloudVisitors.length === 0)) {
+        // Also check if Google Sheets has distinct records not yet in Supabase
+        if (isSheet) {
           try {
             const sheetVisitors = await fetchVisitorsFromSheet();
             if (sheetVisitors && sheetVisitors.length > 0) {
-              console.log(`Menjumpai ${sheetVisitors.length} rekod di Google Sheets. Menyegerakkan ke Supabase...`);
-              for (const sv of sheetVisitors) {
-                await addVisitorToSupabase(sv);
+              const currentSupabase = cloudVisitors || [];
+              const missingFromSupabase = sheetVisitors.filter(
+                (sv) => !currentSupabase.some(
+                  (cv) => String(cv.id) === String(sv.id) ||
+                    (cv.name.trim().toLowerCase() === sv.name.trim().toLowerCase() &&
+                     cv.icOrPassport.trim() === sv.icOrPassport.trim() &&
+                     cv.checkInTime.slice(0, 15) === sv.checkInTime.slice(0, 15))
+                )
+              );
+
+              if (missingFromSupabase.length > 0) {
+                console.log(`Menyegerakkan ${missingFromSupabase.length} rekod dari Google Sheets ke Supabase...`);
+                for (const sv of missingFromSupabase) {
+                  await addVisitorToSupabase(sv);
+                }
+                const refreshed = await fetchVisitorsFromSupabase();
+                if (refreshed) {
+                  cloudVisitors = refreshed;
+                }
               }
-              const refreshed = await fetchVisitorsFromSupabase();
-              cloudVisitors = refreshed || sheetVisitors;
             }
           } catch (sheetErr) {
             console.warn('Gagal muat turun dari Google Sheet untuk Supabase:', sheetErr);
@@ -151,16 +189,20 @@ export default function App() {
 
       if (cloudVisitors && Array.isArray(cloudVisitors)) {
         // AUTO-MIGRATE: If this device has local visitors that are not yet in Supabase
-        // (e.g. 17 records recorded on laptop before Supabase was connected),
-        // automatically push them up to Supabase so the phone and all other devices receive them!
         if (isSupabase && visitorsRef.current.length > 0 && !isAutoUploadingToSupabase.current) {
+          const currentCloud = cloudVisitors;
           const missingInCloud = visitorsRef.current.filter(
-            (local) => !cloudVisitors!.some((cloud) => String(cloud.id) === String(local.id))
+            (local) => !currentCloud.some(
+              (cloud) => String(cloud.id) === String(local.id) ||
+                (cloud.name.trim().toLowerCase() === local.name.trim().toLowerCase() &&
+                 cloud.icOrPassport.trim() === local.icOrPassport.trim() &&
+                 cloud.checkInTime.slice(0, 15) === local.checkInTime.slice(0, 15))
+            )
           );
 
           if (missingInCloud.length > 0) {
             isAutoUploadingToSupabase.current = true;
-            console.log(`Auto-uploading ${missingInCloud.length} local visitors to Supabase...`);
+            console.log(`Auto-uploading ${missingInCloud.length} distinct local visitors to Supabase...`);
             try {
               for (const v of missingInCloud) {
                 await addVisitorToSupabase(v);
@@ -220,7 +262,15 @@ export default function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        setVisitors(sanitizeVisitorsList(parsed));
+        if (Array.isArray(parsed)) {
+          const sanitized = sanitizeVisitorsList(parsed);
+          const diff = parsed.length - sanitized.length;
+          if (diff > 0) {
+            setCleanedDuplicatesCount(diff);
+          }
+          setVisitors(sanitized);
+          localStorage.setItem('school_visitors', JSON.stringify(sanitized));
+        }
       } catch (e) {
         console.error('Failed to parse visitors from local storage');
       }
@@ -459,6 +509,15 @@ export default function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleManualDeduplicate = () => {
+    const cleaned = sanitizeVisitorsList(visitors);
+    const removedCount = visitors.length - cleaned.length;
+    setVisitors(cleaned);
+    localStorage.setItem('school_visitors', JSON.stringify(cleaned));
+    setCleanedDuplicatesCount(removedCount > 0 ? removedCount : 0);
+    syncWithCloud(false);
   };
 
   // Helper for formatted last sync text
@@ -816,6 +875,17 @@ export default function App() {
                       <span>Imbas QR Keluar</span>
                     </button>
 
+                    {/* Bersihkan Rekod Pendua Button */}
+                    <button
+                      type="button"
+                      onClick={handleManualDeduplicate}
+                      className="min-h-[42px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-bold text-xs sm:text-sm rounded-xl shadow-xs transition-all active:scale-95 shrink-0"
+                      title="Singkirkan rekod pendua atau berulang dan selaraskan semula"
+                    >
+                      <Sparkles className="w-4 h-4 text-amber-500" />
+                      <span>Bersihkan Pendua</span>
+                    </button>
+
                     {/* CSV Export Button */}
                     <button
                       type="button"
@@ -834,6 +904,26 @@ export default function App() {
                   </div>
 
                 </div>
+
+                {/* Banner when duplicates are purged */}
+                {cleanedDuplicatesCount > 0 && (
+                  <div className="bg-emerald-50 border-x border-b border-emerald-200 px-4 py-2.5 flex items-center justify-between text-xs text-emerald-800 font-medium">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>
+                        Sistem telah berjaya membersihkan <strong>{cleanedDuplicatesCount} rekod pendua</strong>. Data kini teratur dan tepat mengikut senarai sebenar.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCleanedDuplicatesCount(0)}
+                      className="text-emerald-700 hover:text-emerald-900 font-bold ml-2 p-1"
+                      title="Tutup makluman"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
 
                 {/* Visitor List Component (Responsive Card + Table Views) */}
                 <div className="flex-1 min-h-[450px]">
@@ -980,6 +1070,7 @@ export default function App() {
         visitors={visitors}
         onGenerateReport={(config) => setActiveReportConfig(config)}
         onSyncComplete={() => syncWithCloud(false)}
+        onPurgeDuplicates={handleManualDeduplicate}
       />
 
       {/* Printable PDF Report View */}

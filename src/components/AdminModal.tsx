@@ -57,6 +57,7 @@ interface AdminModalProps {
   visitors: Visitor[];
   onGenerateReport: (config: ReportConfig) => void;
   onSyncComplete?: () => void;
+  onPurgeDuplicates?: () => void;
 }
 
 const STORAGE_KEY_ADMIN_PASS = 'admin_security_password';
@@ -67,7 +68,8 @@ export default function AdminModal({
   onClose, 
   visitors, 
   onGenerateReport,
-  onSyncComplete 
+  onSyncComplete,
+  onPurgeDuplicates 
 }: AdminModalProps) {
   // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -194,19 +196,29 @@ export default function AdminModal({
     }
 
     setIsUploadingToSupabase(true);
-    setUploadProgress({ current: 0, total: visitors.length });
+    // Deduplicate to ensure only genuine, distinct visitors are uploaded to Supabase
+    const distinctVisitors = visitors.filter((v, idx, arr) => 
+      idx === arr.findIndex(item => 
+        (item.id && item.id === v.id) ||
+        (item.name.trim().toLowerCase() === v.name.trim().toLowerCase() &&
+         item.icOrPassport.trim() === v.icOrPassport.trim() &&
+         item.checkInTime.slice(0, 15) === v.checkInTime.slice(0, 15))
+      )
+    );
+
+    setUploadProgress({ current: 0, total: distinctVisitors.length });
 
     let count = 0;
-    for (const v of visitors) {
+    for (const v of distinctVisitors) {
       const ok = await addVisitorToSupabase(v);
       if (ok) count++;
-      setUploadProgress({ current: count, total: visitors.length });
+      setUploadProgress({ current: count, total: distinctVisitors.length });
     }
 
     setIsUploadingToSupabase(false);
     setSupabaseTestResult({
       success: true,
-      message: `Berjaya memindahkan ${count} daripada ${visitors.length} rekod pelawat ke pangkalan data Supabase! Anda kini boleh menyemaknya di Table Editor Supabase.`,
+      message: `Berjaya memindahkan ${count} rekod pelawat (bebas pendua) ke pangkalan data Supabase! Anda kini boleh menyemaknya di Table Editor Supabase.`,
     });
     if (onSyncComplete) onSyncComplete();
   };
@@ -1355,6 +1367,35 @@ export default function AdminModal({
                     >
                       <Download className="w-4 h-4" />
                       Muat Turun Semua Rekod (CSV)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Local Cache Cleanup & Deduplication */}
+                <div className="p-5 bg-amber-50/70 border border-amber-200/90 rounded-2xl space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 bg-amber-100 text-amber-800 rounded-xl">
+                      <Sparkles className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm text-slate-800">Pembersihan Rekod Pendua &amp; Klon</h4>
+                      <p className="text-xs text-slate-600 font-medium">
+                        Jika paparan memaparkan angka tinggi atau klon rekod akibat percubaan segerak lama, klik butang ini untuk membersihkannya serta-merta.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onPurgeDuplicates) onPurgeDuplicates();
+                        onClose();
+                      }}
+                      className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      <span>Bersihkan Rekod Pendua Sekarang</span>
                     </button>
                   </div>
                 </div>

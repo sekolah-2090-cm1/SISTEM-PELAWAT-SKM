@@ -103,29 +103,64 @@ export function isValidGoogleAppsScriptUrl(url: string): { valid: boolean; reaso
 }
 
 /**
- * Parse raw visitor data from array
+ * Parse raw visitor data from array with deterministic IDs and strict deduplication
  */
 function parseVisitorRows(data: any[]): Visitor[] {
   const seenIds = new Set<string>();
-  return data.map((item: any, index: number) => {
-    let rawId = String(item.id || '').trim();
-    if (!rawId || seenIds.has(rawId)) {
-      rawId = rawId ? `${rawId}_${index}_${crypto.randomUUID().slice(0, 6)}` : crypto.randomUUID();
-    }
-    seenIds.add(rawId);
+  const seenSignatures = new Set<string>();
+  const result: Visitor[] = [];
 
-    return {
+  for (let index = 0; index < data.length; index++) {
+    const item = data[index];
+    if (!item) continue;
+    const name = String(item.name || '').trim();
+    if (!name) continue; // ignore blank rows
+
+    let rawId = String(item.id || '').trim();
+    if (!rawId) {
+      // Deterministic ID derived from content - NEVER random UUID!
+      // This ensures the same row gets the EXACT same ID on every fetch!
+      const contentStr = `${name}_${item.icOrPassport || ''}_${item.checkInTime || ''}_${index}`;
+      let hash = 0;
+      for (let i = 0; i < contentStr.length; i++) {
+        hash = ((hash << 5) - hash) + contentStr.charCodeAt(i);
+        hash |= 0;
+      }
+      rawId = `gs_${Math.abs(hash).toString(36)}_${index}`;
+    }
+
+    // Deduplicate by ID
+    if (seenIds.has(rawId)) {
+      continue;
+    }
+
+    const checkIn = String(item.checkInTime || new Date().toISOString());
+    const ic = String(item.icOrPassport || '').trim().toLowerCase();
+    // Signature matching: same person, same IC, within the same 10-minute check-in bucket
+    const sigTime = checkIn.slice(0, 15);
+    const sig = `${name.toLowerCase()}_${ic}_${sigTime}`;
+
+    if (seenSignatures.has(sig)) {
+      continue; // Skip duplicate row from Google Sheets!
+    }
+
+    seenIds.add(rawId);
+    seenSignatures.add(sig);
+
+    result.push({
       id: rawId,
-      name: String(item.name || ''),
+      name: name,
       icOrPassport: String(item.icOrPassport || ''),
-      phone: String(item.phone || ''),
+      phone: String(item.phone || '').replace(/^'/, ''),
       vehiclePlate: String(item.vehiclePlate || ''),
       purpose: String(item.purpose || ''),
-      checkInTime: String(item.checkInTime || new Date().toISOString()),
+      checkInTime: checkIn,
       checkOutTime: item.checkOutTime ? String(item.checkOutTime) : null,
       status: item.status === 'CHECKED_OUT' ? 'CHECKED_OUT' : 'ACTIVE',
-    };
-  });
+    });
+  }
+
+  return result;
 }
 
 /**
@@ -180,33 +215,47 @@ export async function fetchVisitorsFromSheet(): Promise<Visitor[] | null> {
 
 /**
  * Smart merge between local visitor records and cloud Google Sheets records.
- * Resolves multi-device concurrency and prevents data loss:
- * - If record exists in both, status 'CHECKED_OUT' takes precedence with latest checkOutTime.
- * - If record was registered locally within the last 24 hours and hasn't yet synced to cloud, preserves it.
- * - Cloud-only records from other devices (phones, tabs, laptops) are seamlessly added.
- * - Deduplicates keys to guarantee zero React key errors.
- * - Orders by checkInTime descending (newest visitors first).
+ * Strictly deduplicates and prevents ghost duplicate proliferation.
  */
 export function mergeVisitors(localVisitors: Visitor[], cloudVisitors: Visitor[]): Visitor[] {
   const visitorMap = new Map<string, Visitor>();
+  const seenSignatures = new Map<string, string>(); // signature -> id
 
-  // 1. Ingest cloud visitors first
+  const getSig = (v: Visitor) => {
+    const name = String(v?.name || '').trim().toLowerCase();
+    const ic = String(v?.icOrPassport || '').trim().toLowerCase();
+    const date = String(v?.checkInTime || '').slice(0, 15);
+    return `${name}_${ic}_${date}`;
+  };
+
+  // 1. Ingest cloud visitors first (cloud is authoritative)
   if (Array.isArray(cloudVisitors)) {
     for (const cv of cloudVisitors) {
-      if (!cv || !cv.id) continue;
+      if (!cv || !cv.id || !cv.name) continue;
+      const sig = getSig(cv);
+
+      if (seenSignatures.has(sig)) {
+        const existingId = seenSignatures.get(sig)!;
+        const existing = visitorMap.get(existingId);
+        if (existing && cv.status === 'CHECKED_OUT' && existing.status !== 'CHECKED_OUT') {
+          visitorMap.set(existingId, { ...existing, ...cv, id: existingId });
+        }
+        continue;
+      }
+
       visitorMap.set(cv.id, { ...cv });
+      seenSignatures.set(sig, cv.id);
     }
   }
 
-  // 2. Merge local visitors
-  const now = Date.now();
+  // 2. Merge local visitors without creating duplicate clones
   if (Array.isArray(localVisitors)) {
     for (const lv of localVisitors) {
-      if (!lv || !lv.id) continue;
+      if (!lv || !lv.id || !lv.name) continue;
+      const sig = getSig(lv);
 
       if (visitorMap.has(lv.id)) {
         const existing = visitorMap.get(lv.id)!;
-        // If either local or cloud has marked CHECKED_OUT, checkout takes precedence
         const isCheckedOut = existing.status === 'CHECKED_OUT' || lv.status === 'CHECKED_OUT';
         const checkOutTime = existing.checkOutTime || lv.checkOutTime || (isCheckedOut ? new Date().toISOString() : null);
 
@@ -217,12 +266,25 @@ export function mergeVisitors(localVisitors: Visitor[], cloudVisitors: Visitor[]
           checkOutTime: checkOutTime,
           checkInTime: existing.checkInTime || lv.checkInTime,
         });
+      } else if (seenSignatures.has(sig)) {
+        // Person already exists under another ID (e.g. cloud ID). Update checkout if local is newer!
+        const existingId = seenSignatures.get(sig)!;
+        const existing = visitorMap.get(existingId)!;
+        if (lv.status === 'CHECKED_OUT' && existing.status !== 'CHECKED_OUT') {
+          visitorMap.set(existingId, {
+            ...existing,
+            status: 'CHECKED_OUT',
+            checkOutTime: lv.checkOutTime || new Date().toISOString(),
+          });
+        }
       } else {
-        // Record created locally on this device that might not yet be written to cloud
+        // Genuine new local registration (e.g. offline form input in last 24h)
+        const now = Date.now();
         const localCheckIn = new Date(lv.checkInTime).getTime();
         const ageHours = (now - localCheckIn) / (1000 * 60 * 60);
-        if (isNaN(ageHours) || ageHours < 24) {
+        if ((isNaN(ageHours) || ageHours < 24) && lv.name && lv.name.trim()) {
           visitorMap.set(lv.id, { ...lv });
+          seenSignatures.set(sig, lv.id);
         }
       }
     }
