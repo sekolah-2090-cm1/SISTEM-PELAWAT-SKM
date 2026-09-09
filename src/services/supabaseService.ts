@@ -4,6 +4,10 @@ import { Visitor } from '../types';
 const STORAGE_KEY_SUPABASE_URL = 'supabase_project_url';
 const STORAGE_KEY_SUPABASE_ANON_KEY = 'supabase_anon_key';
 
+// Default pre-configured cloud credentials for SK Morib (works on Vercel without manual env setup)
+const DEFAULT_SUPABASE_URL = 'https://moxrzumujiaoeichubxy.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_CcrX3VD7xHht79LVYAvDvw_JioPtFNm';
+
 let cachedClient: SupabaseClient | null = null;
 let currentConfig = {
   url: '',
@@ -21,8 +25,8 @@ export function getSupabaseConfig(): { url: string; anonKey: string } {
   const localUrl = localStorage.getItem(STORAGE_KEY_SUPABASE_URL) || '';
   const localKey = localStorage.getItem(STORAGE_KEY_SUPABASE_ANON_KEY) || '';
 
-  const url = (envUrl || localUrl).trim();
-  const anonKey = (envKey || localKey).trim();
+  const url = (localUrl || envUrl || DEFAULT_SUPABASE_URL).trim();
+  const anonKey = (localKey || envKey || DEFAULT_SUPABASE_ANON_KEY).trim();
 
   currentConfig = { url, anonKey };
   return currentConfig;

@@ -2,13 +2,18 @@ import { Visitor } from '../types';
 
 const STORAGE_KEY_API_URL = 'google_sheet_api_url';
 
+// Default pre-configured Google Sheet Apps Script exec endpoint for SK Morib
+const DEFAULT_GOOGLE_SHEET_API_URL = 'https://script.google.com/macros/s/AKfycbwuGK6fQF3JvfcLQxTy469qUbU-UX6M3mufotgxOj1KWe4Jls9kOaGG6Lk5LPLh5yQe/exec';
+
 let inMemoryApiUrl = '';
 
 export function getGoogleSheetApiUrl(): string {
   if (inMemoryApiUrl.trim()) return inMemoryApiUrl.trim();
   const envUrl = import.meta.env.VITE_GOOGLE_SHEET_API_URL || '';
   if (envUrl.trim()) return envUrl.trim();
-  return localStorage.getItem(STORAGE_KEY_API_URL) || '';
+  const local = localStorage.getItem(STORAGE_KEY_API_URL) || '';
+  if (local.trim()) return local.trim();
+  return DEFAULT_GOOGLE_SHEET_API_URL;
 }
 
 export function setGoogleSheetApiUrl(url: string): void {

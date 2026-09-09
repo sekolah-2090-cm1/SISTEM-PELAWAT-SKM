@@ -127,6 +127,24 @@ export default function App() {
       let cloudVisitors: Visitor[] | null = null;
       if (isSupabase) {
         cloudVisitors = await fetchVisitorsFromSupabase();
+
+        // If Supabase is empty (0 records), check if Google Sheets has the records (e.g. 17 records)
+        // and automatically populate Supabase with them so all phones and devices receive them instantly!
+        if (isSheet && (!cloudVisitors || cloudVisitors.length === 0)) {
+          try {
+            const sheetVisitors = await fetchVisitorsFromSheet();
+            if (sheetVisitors && sheetVisitors.length > 0) {
+              console.log(`Menjumpai ${sheetVisitors.length} rekod di Google Sheets. Menyegerakkan ke Supabase...`);
+              for (const sv of sheetVisitors) {
+                await addVisitorToSupabase(sv);
+              }
+              const refreshed = await fetchVisitorsFromSupabase();
+              cloudVisitors = refreshed || sheetVisitors;
+            }
+          } catch (sheetErr) {
+            console.warn('Gagal muat turun dari Google Sheet untuk Supabase:', sheetErr);
+          }
+        }
       } else if (isSheet) {
         cloudVisitors = await fetchVisitorsFromSheet();
       }
