@@ -2,14 +2,59 @@ import { Visitor } from '../types';
 
 const STORAGE_KEY_API_URL = 'google_sheet_api_url';
 
+let inMemoryApiUrl = '';
+
 export function getGoogleSheetApiUrl(): string {
+  if (inMemoryApiUrl.trim()) return inMemoryApiUrl.trim();
   const envUrl = import.meta.env.VITE_GOOGLE_SHEET_API_URL || '';
   if (envUrl.trim()) return envUrl.trim();
   return localStorage.getItem(STORAGE_KEY_API_URL) || '';
 }
 
 export function setGoogleSheetApiUrl(url: string): void {
-  localStorage.setItem(STORAGE_KEY_API_URL, url.trim());
+  const clean = url.trim();
+  inMemoryApiUrl = clean;
+  localStorage.setItem(STORAGE_KEY_API_URL, clean);
+
+  // Sync to central server so all other devices (smartphones, tablets, laptops) receive it automatically
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ googleSheetApiUrl: clean }),
+  }).catch((e) => console.warn('Penyegerakan config ke server:', e));
+}
+
+/**
+ * Synchronize configuration with central server on app boot.
+ * If another device (like laptop) has configured the URL, smartphone receives it automatically!
+ */
+export async function syncConfigWithServer(): Promise<string> {
+  try {
+    const res = await fetch('/api/config');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.googleSheetApiUrl && typeof data.googleSheetApiUrl === 'string' && data.googleSheetApiUrl.trim()) {
+        const serverUrl = data.googleSheetApiUrl.trim();
+        inMemoryApiUrl = serverUrl;
+        localStorage.setItem(STORAGE_KEY_API_URL, serverUrl);
+        return serverUrl;
+      }
+    }
+  } catch (err) {
+    console.warn('Gagal menyemak config server:', err);
+  }
+
+  // If server has no URL yet but this device has one in localStorage, publish it to server
+  const local = localStorage.getItem(STORAGE_KEY_API_URL) || '';
+  if (local.trim()) {
+    inMemoryApiUrl = local.trim();
+    fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ googleSheetApiUrl: local.trim() }),
+    }).catch(() => {});
+  }
+  return local;
 }
 
 /**
@@ -53,9 +98,49 @@ export function isValidGoogleAppsScriptUrl(url: string): { valid: boolean; reaso
 }
 
 /**
- * Fetch all visitors from Google Sheets
+ * Parse raw visitor data from array
+ */
+function parseVisitorRows(data: any[]): Visitor[] {
+  const seenIds = new Set<string>();
+  return data.map((item: any, index: number) => {
+    let rawId = String(item.id || '').trim();
+    if (!rawId || seenIds.has(rawId)) {
+      rawId = rawId ? `${rawId}_${index}_${crypto.randomUUID().slice(0, 6)}` : crypto.randomUUID();
+    }
+    seenIds.add(rawId);
+
+    return {
+      id: rawId,
+      name: String(item.name || ''),
+      icOrPassport: String(item.icOrPassport || ''),
+      phone: String(item.phone || ''),
+      vehiclePlate: String(item.vehiclePlate || ''),
+      purpose: String(item.purpose || ''),
+      checkInTime: String(item.checkInTime || new Date().toISOString()),
+      checkOutTime: item.checkOutTime ? String(item.checkOutTime) : null,
+      status: item.status === 'CHECKED_OUT' ? 'CHECKED_OUT' : 'ACTIVE',
+    };
+  });
+}
+
+/**
+ * Fetch all visitors from Google Sheets (Centralized server proxy with direct fallback)
  */
 export async function fetchVisitorsFromSheet(): Promise<Visitor[] | null> {
+  // Method 1: Try server-side proxy first (100% bypasses mobile browser CORS & 302 redirects)
+  try {
+    const proxyRes = await fetch('/api/sheet/visitors');
+    if (proxyRes.ok) {
+      const data = await proxyRes.json();
+      if (Array.isArray(data)) {
+        return parseVisitorRows(data);
+      }
+    }
+  } catch {
+    // Server proxy offline or error, proceed to direct client fetch
+  }
+
+  // Method 2: Direct client fetch
   const apiUrl = getGoogleSheetApiUrl();
   if (!apiUrl) return null;
 
@@ -65,7 +150,6 @@ export async function fetchVisitorsFromSheet(): Promise<Visitor[] | null> {
   }
 
   try {
-    // Add cache-busting timestamp
     const fetchUrl = `${apiUrl}?t=${Date.now()}`;
     const response = await fetch(fetchUrl, {
       method: 'GET',
@@ -80,26 +164,7 @@ export async function fetchVisitorsFromSheet(): Promise<Visitor[] | null> {
 
     const data = await response.json();
     if (Array.isArray(data)) {
-      const seenIds = new Set<string>();
-      return data.map((item: any, index: number) => {
-        let rawId = String(item.id || '').trim();
-        if (!rawId || seenIds.has(rawId)) {
-          rawId = rawId ? `${rawId}_${index}_${crypto.randomUUID().slice(0, 6)}` : crypto.randomUUID();
-        }
-        seenIds.add(rawId);
-
-        return {
-          id: rawId,
-          name: String(item.name || ''),
-          icOrPassport: String(item.icOrPassport || ''),
-          phone: String(item.phone || ''),
-          vehiclePlate: String(item.vehiclePlate || ''),
-          purpose: String(item.purpose || ''),
-          checkInTime: String(item.checkInTime || new Date().toISOString()),
-          checkOutTime: item.checkOutTime ? String(item.checkOutTime) : null,
-          status: item.status === 'CHECKED_OUT' ? 'CHECKED_OUT' : 'ACTIVE',
-        };
-      });
+      return parseVisitorRows(data);
     }
     return null;
   } catch (error) {
@@ -195,14 +260,21 @@ export async function addVisitorToSheet(visitor: Visitor): Promise<boolean> {
     const queryString = params.toString();
     const targetUrl = apiUrl.includes('?') ? `${apiUrl}&${queryString}` : `${apiUrl}?${queryString}`;
 
-    // Primary: Send with GET no-cors (100% immune to 302 redirect payload drops in all browsers)
+    // 1. Relay through local central server (bypasses browser drops)
+    fetch('/api/sheet/visitors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(visitor),
+    }).catch(() => {});
+
+    // 2. Primary direct client: Send with GET no-cors (100% immune to 302 redirect payload drops in all browsers)
     fetch(targetUrl, {
       method: 'GET',
       mode: 'no-cors',
       cache: 'no-cache',
     }).catch((e) => console.warn('GET sync error:', e));
 
-    // Secondary: Also send POST as backup
+    // 3. Secondary direct client: Also send POST as backup
     fetch(apiUrl, {
       method: 'POST',
       mode: 'no-cors',
@@ -239,14 +311,21 @@ export async function checkOutVisitorInSheet(id: string, checkOutTime: string): 
     const queryString = params.toString();
     const targetUrl = apiUrl.includes('?') ? `${apiUrl}&${queryString}` : `${apiUrl}?${queryString}`;
 
-    // Primary: GET no-cors
+    // 1. Relay through local central server
+    fetch('/api/sheet/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, checkOutTime }),
+    }).catch(() => {});
+
+    // 2. Primary direct client: GET no-cors
     fetch(targetUrl, {
       method: 'GET',
       mode: 'no-cors',
       cache: 'no-cache',
     }).catch((e) => console.warn('GET checkout sync error:', e));
 
-    // Secondary: POST
+    // 3. Secondary direct client: POST
     fetch(apiUrl, {
       method: 'POST',
       mode: 'no-cors',

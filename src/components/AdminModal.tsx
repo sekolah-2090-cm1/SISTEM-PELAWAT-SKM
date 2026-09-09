@@ -10,7 +10,8 @@ import {
   RefreshCw, 
   Check, 
   Copy, 
-  AlertTriangle, 
+  AlertTriangle,
+  AlertCircle,
   Info, 
   Database,
   Sliders,
@@ -23,8 +24,14 @@ import {
   Send,
   CheckCircle2,
   HelpCircle,
-  ExternalLink
+  ExternalLink,
+  Smartphone,
+  Share2,
+  Sparkles,
+  UploadCloud,
+  Server
 } from 'lucide-react';
+import QRCode from 'qrcode';
 import { Visitor } from '../types';
 import { 
   getGoogleSheetApiUrl, 
@@ -34,6 +41,14 @@ import {
   isValidGoogleAppsScriptUrl,
   GOOGLE_APPS_SCRIPT_TEMPLATE 
 } from '../services/sheetsService';
+import {
+  getSupabaseConfig,
+  setSupabaseConfig,
+  testSupabaseConnection,
+  isSupabaseConfigured,
+  addVisitorToSupabase,
+  SUPABASE_SQL_SCHEMA
+} from '../services/supabaseService';
 import { ReportConfig } from './ReportPrintView';
 
 interface AdminModalProps {
@@ -67,7 +82,7 @@ export default function AdminModal({
   const [passChangeSuccess, setPassChangeSuccess] = useState<string | null>(null);
   const [passChangeError, setPassChangeError] = useState<string | null>(null);
 
-  const [activeAdminTab, setActiveAdminTab] = useState<'pdf' | 'sheets' | 'export' | 'security'>('sheets');
+  const [activeAdminTab, setActiveAdminTab] = useState<'supabase' | 'sheets' | 'pdf' | 'export' | 'security'>('supabase');
   
   // PDF Report State
   const [reportType, setReportType] = useState<'mingguan' | 'bulanan' | 'tahunan' | 'kustom'>('bulanan');
@@ -80,12 +95,153 @@ export default function AdminModal({
   const [customStartDate, setCustomStartDate] = useState<string>(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]);
   const [customEndDate, setCustomEndDate] = useState<string>(now.toISOString().split('T')[0]);
 
+  // Supabase State
+  const initialSupabaseConfig = getSupabaseConfig();
+  const [supabaseUrl, setSupabaseUrl] = useState(initialSupabaseConfig.url || 'https://moxrzumujiaoeichubxy.supabase.co');
+  const [supabaseAnonKey, setSupabaseAnonKey] = useState(initialSupabaseConfig.anonKey);
+  const [isTestingSupabase, setIsTestingSupabase] = useState(false);
+  const [supabaseTestResult, setSupabaseTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [isUploadingToSupabase, setIsUploadingToSupabase] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null);
+  const [copiedSql, setCopiedSql] = useState(false);
+  const [supabasePairQrUrl, setSupabasePairQrUrl] = useState<string>('');
+  const [copiedSupabasePairLink, setCopiedSupabasePairLink] = useState(false);
+
   // Google Sheets state
   const [url, setUrl] = useState(getGoogleSheetApiUrl());
   const [isTesting, setIsTesting] = useState(false);
   const [isSendingTestRow, setIsSendingTestRow] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; isSendTest?: boolean } | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
+  const [phonePairQrUrl, setPhonePairQrUrl] = useState<string>('');
+  const [copiedPairLink, setCopiedPairLink] = useState(false);
+
+  // Generate Phone Pairing QR Code for Supabase
+  useEffect(() => {
+    if (supabaseUrl && supabaseAnonKey && typeof window !== 'undefined') {
+      const pairUrl = `${window.location.origin}${window.location.pathname}?setup_supabase_url=${encodeURIComponent(supabaseUrl.trim())}&setup_supabase_key=${encodeURIComponent(supabaseAnonKey.trim())}`;
+      QRCode.toDataURL(pairUrl, {
+        width: 320,
+        margin: 1.5,
+        color: { dark: '#047857', light: '#ffffff' },
+        errorCorrectionLevel: 'M'
+      })
+        .then((dataUrl) => setSupabasePairQrUrl(dataUrl))
+        .catch(() => setSupabasePairQrUrl(''));
+    } else {
+      setSupabasePairQrUrl('');
+    }
+  }, [supabaseUrl, supabaseAnonKey]);
+
+  const handleCopySupabasePairingLink = () => {
+    if (typeof window !== 'undefined' && supabaseUrl && supabaseAnonKey) {
+      const pairUrl = `${window.location.origin}${window.location.pathname}?setup_supabase_url=${encodeURIComponent(supabaseUrl.trim())}&setup_supabase_key=${encodeURIComponent(supabaseAnonKey.trim())}`;
+      navigator.clipboard.writeText(pairUrl);
+      setCopiedSupabasePairLink(true);
+      setTimeout(() => setCopiedSupabasePairLink(false), 3000);
+    }
+  };
+
+  const handleTestAndSaveSupabase = async () => {
+    let cleanUrl = supabaseUrl.trim().replace(/['"\s;]/g, '');
+    if (cleanUrl.includes('=')) {
+      cleanUrl = cleanUrl.split('=').pop()?.trim() || cleanUrl;
+    }
+    let cleanKey = supabaseAnonKey.trim().replace(/['"\s;]/g, '');
+    if (cleanKey.includes('=')) {
+      cleanKey = cleanKey.split('=').pop()?.trim() || cleanKey;
+    }
+
+    if (!cleanUrl || !cleanKey) {
+      setSupabaseTestResult({
+        success: false,
+        message: 'Sila lengkapkan Project URL dan anon public key dari dashboard Supabase.',
+      });
+      return;
+    }
+
+    setSupabaseUrl(cleanUrl);
+    setSupabaseAnonKey(cleanKey);
+
+    setIsTestingSupabase(true);
+    setSupabaseTestResult(null);
+
+    const res = await testSupabaseConnection(cleanUrl, cleanKey);
+    setIsTestingSupabase(false);
+    setSupabaseTestResult(res);
+
+    if (res.success) {
+      setSupabaseConfig(cleanUrl, cleanKey);
+      if (onSyncComplete) onSyncComplete();
+    }
+  };
+
+  const handleUploadAllToSupabase = async () => {
+    if (!isSupabaseConfigured()) {
+      setSupabaseTestResult({
+        success: false,
+        message: 'Sila sambungkan Supabase terlebih dahulu sebelum memindahkan data.',
+      });
+      return;
+    }
+
+    if (visitors.length === 0) {
+      setSupabaseTestResult({
+        success: true,
+        message: 'Tiada rekod pelawat tempatan untuk dipindahkan.',
+      });
+      return;
+    }
+
+    setIsUploadingToSupabase(true);
+    setUploadProgress({ current: 0, total: visitors.length });
+
+    let count = 0;
+    for (const v of visitors) {
+      const ok = await addVisitorToSupabase(v);
+      if (ok) count++;
+      setUploadProgress({ current: count, total: visitors.length });
+    }
+
+    setIsUploadingToSupabase(false);
+    setSupabaseTestResult({
+      success: true,
+      message: `Berjaya memindahkan ${count} daripada ${visitors.length} rekod pelawat ke pangkalan data Supabase! Anda kini boleh menyemaknya di Table Editor Supabase.`,
+    });
+    if (onSyncComplete) onSyncComplete();
+  };
+
+  const handleCopySql = () => {
+    navigator.clipboard.writeText(SUPABASE_SQL_SCHEMA);
+    setCopiedSql(true);
+    setTimeout(() => setCopiedSql(false), 3000);
+  };
+
+  // Generate Phone Pairing QR Code
+  useEffect(() => {
+    if (url && isValidGoogleAppsScriptUrl(url).valid && typeof window !== 'undefined') {
+      const pairUrl = `${window.location.origin}${window.location.pathname}?setup_sheet=${encodeURIComponent(url.trim())}`;
+      QRCode.toDataURL(pairUrl, {
+        width: 320,
+        margin: 1.5,
+        color: { dark: '#0f172a', light: '#ffffff' },
+        errorCorrectionLevel: 'M'
+      })
+        .then((dataUrl) => setPhonePairQrUrl(dataUrl))
+        .catch(() => setPhonePairQrUrl(''));
+    } else {
+      setPhonePairQrUrl('');
+    }
+  }, [url]);
+
+  const handleCopyPairingLink = () => {
+    if (typeof window !== 'undefined' && url) {
+      const pairUrl = `${window.location.origin}${window.location.pathname}?setup_sheet=${encodeURIComponent(url.trim())}`;
+      navigator.clipboard.writeText(pairUrl);
+      setCopiedPairLink(true);
+      setTimeout(() => setCopiedPairLink(false), 3000);
+    }
+  };
 
   // Reset auth when modal opens
   useEffect(() => {
@@ -93,6 +249,9 @@ export default function AdminModal({
       setEnteredPassword('');
       setAuthError(null);
       setUrl(getGoogleSheetApiUrl());
+      const sc = getSupabaseConfig();
+      setSupabaseUrl(sc.url);
+      setSupabaseAnonKey(sc.anonKey);
     }
   }, [isOpen]);
 
@@ -487,14 +646,29 @@ export default function AdminModal({
               </div>
             </div>
 
-            {/* Tab Navigation - Responsive 2x2 grid on mobile, 4 in a row on tablet/laptop */}
+            {/* Tab Navigation - Responsive 2x3 grid on mobile, 5 in a row on tablet/laptop */}
             <div className="p-2 sm:px-6 bg-slate-50/90 border-b border-slate-200/60 shrink-0 relative z-10">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2 bg-slate-200/60 p-1.5 rounded-2xl">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 sm:gap-2 bg-slate-200/60 p-1.5 rounded-2xl">
+                <button
+                  onClick={() => setActiveAdminTab('supabase')}
+                  className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 sm:py-2.5 px-2 rounded-xl text-xs sm:text-sm font-bold transition-all relative ${
+                    activeAdminTab === 'supabase'
+                      ? 'bg-white text-emerald-700 shadow-sm border border-slate-200/60'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+                  }`}
+                >
+                  <Database className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span className="truncate">Supabase Cloud</span>
+                  <span className="hidden xl:inline-block px-1.5 py-0.2 bg-emerald-100 text-emerald-800 text-[9px] font-black rounded-md">
+                    Disyorkan
+                  </span>
+                </button>
+
                 <button
                   onClick={() => setActiveAdminTab('sheets')}
-                  className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 sm:py-2.5 px-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                  className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 sm:py-2.5 px-2 rounded-xl text-xs sm:text-sm font-bold transition-all ${
                     activeAdminTab === 'sheets'
-                      ? 'bg-white text-emerald-600 shadow-sm border border-slate-200/60'
+                      ? 'bg-white text-blue-600 shadow-sm border border-slate-200/60'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
                   }`}
                 >
@@ -504,7 +678,7 @@ export default function AdminModal({
 
                 <button
                   onClick={() => setActiveAdminTab('pdf')}
-                  className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 sm:py-2.5 px-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                  className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 sm:py-2.5 px-2 rounded-xl text-xs sm:text-sm font-bold transition-all ${
                     activeAdminTab === 'pdf'
                       ? 'bg-white text-blue-600 shadow-sm border border-slate-200/60'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
@@ -516,7 +690,7 @@ export default function AdminModal({
 
                 <button
                   onClick={() => setActiveAdminTab('export')}
-                  className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 sm:py-2.5 px-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                  className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 sm:py-2.5 px-2 rounded-xl text-xs sm:text-sm font-bold transition-all ${
                     activeAdminTab === 'export'
                       ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/60'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
@@ -528,7 +702,7 @@ export default function AdminModal({
 
                 <button
                   onClick={() => setActiveAdminTab('security')}
-                  className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 sm:py-2.5 px-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                  className={`flex items-center justify-center gap-1.5 sm:gap-2 py-2 sm:py-2.5 px-2 rounded-xl text-xs sm:text-sm font-bold transition-all col-span-2 sm:col-span-1 ${
                     activeAdminTab === 'security'
                       ? 'bg-white text-amber-600 shadow-sm border border-slate-200/60'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
@@ -542,6 +716,252 @@ export default function AdminModal({
 
             {/* Main Tabs Content - Single Clean Scrollable Container */}
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 relative z-10">
+
+            {/* Tab 0: Pangkalan Data Supabase Cloud (Disyorkan) */}
+            {activeAdminTab === 'supabase' && (
+              <div className="space-y-4 relative z-10 animate-in fade-in duration-150">
+                {/* Status Card */}
+                <div className="p-4 bg-gradient-to-br from-emerald-50 via-teal-50 to-blue-50 border-2 border-emerald-300 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-emerald-600 text-white rounded-xl">
+                        <Database className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs sm:text-sm font-bold text-emerald-950">Pangkalan Data Berpusat Supabase (Real-Time)</h4>
+                        <p className="text-[11px] text-emerald-700">Penyelesaian data serentak untuk telefon bimbit &amp; komputer riba sekolah tanpa kekangan sekatan MOE.</p>
+                      </div>
+                    </div>
+                    {isSupabaseConfigured() ? (
+                      <span className="px-2.5 py-1 bg-emerald-600 text-white text-[11px] font-black rounded-full flex items-center gap-1 shadow-xs">
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Aktif &amp; Bersambung</span>
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-1 bg-amber-500 text-white text-[11px] font-bold rounded-full">
+                        Belum Dikonfigurasi
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Step 1: SQL Script */}
+                <div className="p-4 bg-white border border-slate-200 rounded-2xl space-y-3 shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[11px] flex items-center justify-center font-bold">1</span>
+                      <span>Cipta Jadual di Supabase (Salin &amp; Jalankan SQL)</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCopySql}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all shadow-xs"
+                    >
+                      {copiedSql ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedSql ? 'Skrip Disalin!' : 'Salin Kod SQL'}</span>
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Buka <a href="https://supabase.com/dashboard" target="_blank" rel="noreferrer" className="text-blue-600 underline font-bold inline-flex items-center gap-0.5">Dashboard Supabase <ExternalLink className="w-3 h-3" /></a>, pilih projek anda, klik menu <strong>SQL Editor</strong> di panel sebelah kiri, tampal skrip ini dan tekan butang hijau <strong>Run</strong>.
+                  </p>
+                </div>
+
+                {/* Step 2: Connection Credentials */}
+                <div className="p-4 bg-white border border-slate-200 rounded-2xl space-y-3 shadow-xs">
+                  <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                    <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[11px] flex items-center justify-center font-bold">2</span>
+                    <span>Masukkan Maklumat Sambungan (Project URL &amp; anon key)</span>
+                  </div>
+
+                  {/* Visual Guide on Where to find publishable key */}
+                  <div className="p-3.5 bg-emerald-50/90 border border-emerald-200 rounded-xl space-y-2.5">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-950">
+                      <HelpCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Di skrin Supabase anda sekarang:</span>
+                    </div>
+                    <div className="text-[11px] text-emerald-900 space-y-2 leading-relaxed">
+                      <div className="p-2.5 bg-white/90 rounded-lg border border-emerald-200 text-xs">
+                        <span className="text-slate-500 font-mono text-[10px] block mb-1">Di kotak "Set environment variables" Supabase:</span>
+                        <div className="flex items-center justify-between font-mono text-[11px] text-emerald-950 font-bold">
+                          <span>SUPABASE_PUBLISHABLE_KEY</span>
+                          <span className="text-[10px] text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">Salin baris ini!</span>
+                        </div>
+                        <span className="text-slate-600 text-[10px] block mt-0.5">
+                          (Kunci ini bermula dengan perkataan <code className="font-bold text-emerald-800">sb_publishable_...</code>)
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-600">
+                        *Klik ikon salin (dua segi empat) di sebelah kanan baris <strong>SUPABASE_PUBLISHABLE_KEY</strong> pada skrin Supabase anda dan tampalkan ke bawah.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Project URL
+                      </label>
+                      <input
+                        type="url"
+                        value={supabaseUrl}
+                        onChange={(e) => {
+                          setSupabaseUrl(e.target.value);
+                          setSupabaseTestResult(null);
+                        }}
+                        placeholder="https://moxrzumujiaoeichubxy.supabase.co"
+                        className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Publishable Key / Anon Key (SUPABASE_PUBLISHABLE_KEY)
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={supabaseAnonKey}
+                        onChange={(e) => {
+                          setSupabaseAnonKey(e.target.value);
+                          setSupabaseTestResult(null);
+                        }}
+                        placeholder="sb_publishable_... atau eyJhbGciOi..."
+                        className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleTestAndSaveSupabase}
+                        disabled={isTestingSupabase}
+                        className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-2"
+                      >
+                        {isTestingSupabase ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Menguji Sambungan...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>Uji &amp; Simpan Sambungan Supabase</span>
+                          </>
+                        )}
+                      </button>
+
+                      {isSupabaseConfigured() && (
+                        <button
+                          type="button"
+                          onClick={handleUploadAllToSupabase}
+                          disabled={isUploadingToSupabase}
+                          className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-2"
+                        >
+                          {isUploadingToSupabase ? (
+                            <>
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              <span>Memindahkan Data ({uploadProgress?.current}/{uploadProgress?.total})...</span>
+                            </>
+                          ) : (
+                            <>
+                              <UploadCloud className="w-4 h-4" />
+                              <span>Pindahkan Semua Rekod ({visitors.length}) ke Supabase</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {supabaseTestResult && (
+                    <div
+                      className={`p-3 rounded-xl text-xs flex items-start gap-2.5 font-medium ${
+                        supabaseTestResult.success
+                          ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+                          : 'bg-rose-50 text-rose-900 border border-rose-200'
+                      }`}
+                    >
+                      {supabaseTestResult.success ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      )}
+                      <div>{supabaseTestResult.message}</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Step 3: Instant Phone Pairing Card */}
+                {supabaseUrl && supabaseAnonKey && supabasePairQrUrl && (
+                  <div className="p-4 bg-gradient-to-br from-blue-50 via-teal-50 to-emerald-50 border-2 border-emerald-300 rounded-2xl space-y-3 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-xs font-black text-emerald-950">
+                        <Smartphone className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Pautkan Telefon Pengawal Serta-Merta (Imbas Kod QR)</span>
+                      </div>
+                      <span className="px-2 py-0.5 bg-emerald-600 text-white text-[10px] font-bold rounded-full">
+                        Automatik
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-700 leading-relaxed font-medium">
+                      Pengawal tidak perlu mengisi sebarang tetapan! Imbas kod QR ini pada telefon bimbit pondok pengawal untuk terus menyegerakkan sistem secara langsung dengan pangkalan data Supabase.
+                    </p>
+
+                    <div className="flex flex-col sm:flex-row items-center gap-4 bg-white p-3 rounded-xl border border-emerald-200 shadow-xs">
+                      <div className="p-2 bg-white rounded-xl border border-slate-200 shadow-inner shrink-0">
+                        <img 
+                          src={supabasePairQrUrl} 
+                          alt="Kod QR Pautkan Supabase" 
+                          className="w-32 h-32 sm:w-36 sm:h-36 object-contain"
+                        />
+                      </div>
+                      <div className="space-y-2.5 text-left w-full">
+                        <div className="text-xs font-bold text-slate-900">
+                          Cara Penggunaan:
+                        </div>
+                        <ol className="text-xs text-slate-600 space-y-1 list-decimal list-inside leading-relaxed">
+                          <li>Buka kamera telefon bimbit pengawal.</li>
+                          <li>Halakan ke arah kod QR ini.</li>
+                          <li>Tekan pautan yang dipaparkan — semua data akan diselaraskan serta-merta tanpa perlu memasukkan sebarang kunci.</li>
+                        </ol>
+                        <div className="pt-1">
+                          <button
+                            type="button"
+                            onClick={handleCopySupabasePairingLink}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl transition-all shadow-xs"
+                          >
+                            {copiedSupabasePairLink ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
+                            <span>{copiedSupabasePairLink ? 'Pautan Disalin!' : 'Salin Pautan Pautkan Telefon (WhatsApp)'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Help: How to view data like Google Sheets in Supabase */}
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                      <Table className="w-4 h-4 text-emerald-600" />
+                      <span>Bagaimana Cara Melihat Data Seperti Google Sheets di Supabase?</span>
+                    </div>
+                    <a
+                      href="https://supabase.com/dashboard"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs font-bold text-emerald-700 hover:underline inline-flex items-center gap-1"
+                    >
+                      <span>Buka Dashboard</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Di dalam Supabase Dashboard, klik ikon <strong>Table Editor</strong> di menu sebelah kiri dan pilih jadual <strong>visitors</strong>. Anda akan melihat semua nama pelawat, masa masuk, dan maklumat kenderaan dalam bentuk jadual baris dan lajur (seperti Google Sheets). Terdapat butang <strong>Export to CSV</strong> di bucu atas kanan untuk memuat turun fail ke Excel bila-bila masa.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Tab 1: Pangkalan Data Google Sheets */}
             {activeAdminTab === 'sheets' && (
@@ -610,6 +1030,55 @@ export default function AdminModal({
                     <span>{isTesting ? 'Menyemak Data...' : 'Semak Rekod Dalam Sheet'}</span>
                   </button>
                 </div>
+
+                {/* Instant Mobile Pairing Card (QR Code & Link) */}
+                {url && isValidGoogleAppsScriptUrl(url).valid && phonePairQrUrl && (
+                  <div className="p-4 bg-gradient-to-br from-blue-50 via-indigo-50 to-emerald-50 border-2 border-blue-300 rounded-2xl space-y-3.5 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-xs font-black text-blue-950">
+                        <Smartphone className="w-4 h-4 text-blue-600 shrink-0" />
+                        <span>Pautkan Telefon Bimbit Pengawal Serta-Merta (Imbas Kod QR)</span>
+                      </div>
+                      <span className="px-2 py-0.5 bg-blue-600 text-white text-[10px] font-bold rounded-full">
+                        Mudah &amp; Pantas
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-700 leading-relaxed font-medium">
+                      Pengawal tidak perlu menaip URL yang panjang di telefon! Imbas kod QR ini menggunakan kamera telefon bimbit untuk terus membuka sistem dengan pautan Google Sheets yang telah siap disambungkan.
+                    </p>
+
+                    <div className="flex flex-col sm:flex-row items-center gap-4 bg-white p-3 rounded-xl border border-blue-200 shadow-xs">
+                      <div className="p-2 bg-white rounded-xl border border-slate-200 shadow-inner shrink-0">
+                        <img 
+                          src={phonePairQrUrl} 
+                          alt="Kod QR Pautkan Telefon" 
+                          className="w-32 h-32 sm:w-36 sm:h-36 object-contain"
+                        />
+                      </div>
+                      <div className="space-y-2.5 text-left w-full">
+                        <div className="text-xs font-bold text-slate-900">
+                          Cara Penggunaan:
+                        </div>
+                        <ol className="text-xs text-slate-600 space-y-1 list-decimal list-inside leading-relaxed">
+                          <li>Buka aplikasi kamera telefon bimbit atau WhatsApp.</li>
+                          <li>Halakan ke arah kod QR di sebelah.</li>
+                          <li>Tekan pautan yang muncul — sistem akan terus dibuka dan diselaraskan secara automatik!</li>
+                        </ol>
+                        <div className="pt-1">
+                          <button
+                            type="button"
+                            onClick={handleCopyPairingLink}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-xs rounded-xl transition-all shadow-xs"
+                          >
+                            {copiedPairLink ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
+                            <span>{copiedPairLink ? 'Pautan Berjaya Disalin!' : 'Salin Pautan Pautkan Telefon (WhatsApp)'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Critical Troubleshooting Guide: Why data didn't enter */}
                 <div className="p-4 bg-amber-50/70 border border-amber-200/90 rounded-2xl space-y-2.5">

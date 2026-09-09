@@ -17,7 +17,8 @@ import {
   WifiOff, 
   CheckCircle2, 
   X, 
-  Sparkles 
+  Sparkles,
+  Database
 } from 'lucide-react';
 import { Visitor } from './types';
 import VisitorForm from './components/VisitorForm';
@@ -30,11 +31,22 @@ import QRScannerModal from './components/QRScannerModal';
 import VisitorPassModal from './components/VisitorPassModal';
 import { 
   getGoogleSheetApiUrl, 
+  setGoogleSheetApiUrl,
+  syncConfigWithServer,
   fetchVisitorsFromSheet, 
   addVisitorToSheet, 
   checkOutVisitorInSheet,
   mergeVisitors
 } from './services/sheetsService';
+import {
+  isSupabaseConfigured,
+  setSupabaseConfig,
+  syncSupabaseConfigWithServer,
+  fetchVisitorsFromSupabase,
+  addVisitorToSupabase,
+  checkOutVisitorInSupabase,
+  subscribeToVisitorChanges
+} from './services/supabaseService';
 
 // Helper to guarantee unique IDs across any visitor list
 function sanitizeVisitorsList(list: any[]): Visitor[] {
@@ -75,6 +87,7 @@ export default function App() {
   // Real-time synchronization state
   const [isSyncing, setIsSyncing] = useState(false);
   const [hasSheetConfig, setHasSheetConfig] = useState(false);
+  const [hasSupabaseConfig, setHasSupabaseConfig] = useState(isSupabaseConfigured());
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [activeReportConfig, setActiveReportConfig] = useState<ReportConfig | null>(null);
@@ -95,17 +108,27 @@ export default function App() {
     }
   }, []);
 
-  // Multi-device Cloud Sync Engine
+  // Multi-device Cloud Sync Engine (Supabase Real-Time + Google Sheets)
   const syncWithCloud = useCallback(async (silent = false) => {
-    const apiUrl = getGoogleSheetApiUrl();
-    const isConfigured = !!apiUrl;
-    setHasSheetConfig(isConfigured);
-    if (!isConfigured) return;
+    const isSupabase = isSupabaseConfigured();
+    setHasSupabaseConfig(isSupabase);
+
+    const sheetUrl = getGoogleSheetApiUrl();
+    const isSheet = !!sheetUrl;
+    setHasSheetConfig(isSheet);
+
+    if (!isSupabase && !isSheet) return;
 
     if (!silent) setIsSyncing(true);
 
     try {
-      const cloudVisitors = await fetchVisitorsFromSheet();
+      let cloudVisitors: Visitor[] | null = null;
+      if (isSupabase) {
+        cloudVisitors = await fetchVisitorsFromSupabase();
+      } else if (isSheet) {
+        cloudVisitors = await fetchVisitorsFromSheet();
+      }
+
       if (cloudVisitors && Array.isArray(cloudVisitors)) {
         // Smart merge resolves cross-device updates without wiping recent local inputs
         const merged = mergeVisitors(visitorsRef.current, cloudVisitors);
@@ -123,7 +146,28 @@ export default function App() {
     }
   }, []);
 
-  // 1. Initial Data Load (from localStorage immediately, then Cloud)
+  // 1. Check URL parameters for instant phone pairing via QR code
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const setupSheet = params.get('setup_sheet');
+      if (setupSheet) {
+        setGoogleSheetApiUrl(setupSheet);
+        setHasSheetConfig(true);
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
+      const supabaseUrlParam = params.get('setup_supabase_url');
+      const supabaseKeyParam = params.get('setup_supabase_key');
+      if (supabaseUrlParam && supabaseKeyParam) {
+        setSupabaseConfig(supabaseUrlParam, supabaseKeyParam);
+        setHasSupabaseConfig(true);
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+  }, []);
+
+  // 2. Initial Data Load & Central Server Config Check
   useEffect(() => {
     const saved = localStorage.getItem('school_visitors');
     if (saved) {
@@ -135,12 +179,33 @@ export default function App() {
       }
     }
 
-    syncWithCloud(false);
+    // Check server-config.json so mobile guards inherit Supabase settings automatically
+    Promise.all([
+      syncConfigWithServer(),
+      syncSupabaseConfigWithServer()
+    ]).then(() => {
+      setHasSheetConfig(!!getGoogleSheetApiUrl());
+      setHasSupabaseConfig(isSupabaseConfigured());
+      syncWithCloud(false);
+    });
   }, [syncWithCloud]);
 
-  // 2. Real-Time Multi-Device Sync Listeners
+  // 3. Supabase Real-Time Subscription (Instant sub-second updates across all laptops & phones)
   useEffect(() => {
-    // A. Automatic background polling every 12 seconds
+    if (!hasSupabaseConfig) return;
+
+    const unsubscribe = subscribeToVisitorChanges(() => {
+      syncWithCloud(true);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [hasSupabaseConfig, syncWithCloud]);
+
+  // 4. Real-Time Multi-Device Sync Listeners (Polling & Focus triggers)
+  useEffect(() => {
+    // A. Background fallback polling every 12 seconds
     const pollTimer = setInterval(() => {
       syncWithCloud(true);
     }, 12000);
@@ -232,7 +297,13 @@ export default function App() {
     // Broadcast update to other tabs/windows
     broadcastSync();
 
-    // Async sync to Google Sheets
+    // Async sync to Supabase (primary) and/or Google Sheets
+    if (isSupabaseConfigured()) {
+      setIsSyncing(true);
+      await addVisitorToSupabase(newVisitor);
+      setIsSyncing(false);
+      setLastSyncedAt(new Date());
+    }
     if (getGoogleSheetApiUrl()) {
       setIsSyncing(true);
       await addVisitorToSheet(newVisitor);
@@ -257,7 +328,13 @@ export default function App() {
     // Broadcast update to other tabs/windows
     broadcastSync();
 
-    // Async sync to Google Sheets
+    // Async sync to Supabase (primary) and/or Google Sheets
+    if (isSupabaseConfigured()) {
+      setIsSyncing(true);
+      await checkOutVisitorInSupabase(id, checkOutTime);
+      setIsSyncing(false);
+      setLastSyncedAt(new Date());
+    }
     if (getGoogleSheetApiUrl()) {
       setIsSyncing(true);
       await checkOutVisitorInSheet(id, checkOutTime);
@@ -396,18 +473,28 @@ export default function App() {
                 <div className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
                   !isOnline 
                     ? 'bg-amber-100 text-amber-800 border-amber-300'
-                    : hasSheetConfig 
-                      ? 'bg-emerald-100 text-emerald-800 border-emerald-200' 
+                    : (hasSupabaseConfig || hasSheetConfig) 
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300' 
                       : 'bg-slate-100 text-slate-700 border-slate-200'
                 }`}>
                   <span className={`w-2 h-2 rounded-full ${
                     !isOnline 
                       ? 'bg-amber-500' 
-                      : hasSheetConfig 
+                      : (hasSupabaseConfig || hasSheetConfig) 
                         ? (isSyncing ? 'bg-blue-500 animate-spin' : 'bg-emerald-500 animate-pulse') 
                         : 'bg-slate-400'
                   }`}></span>
-                  <span>{isOnline ? (hasSheetConfig ? (isSyncing ? 'Segerak...' : 'Auto') : 'Tempatan') : 'Offline'}</span>
+                  <span>
+                    {!isOnline 
+                      ? 'Offline' 
+                      : isSyncing 
+                        ? 'Segerak...' 
+                        : hasSupabaseConfig 
+                          ? 'Supabase Live' 
+                          : hasSheetConfig 
+                            ? 'Sheets' 
+                            : 'Tempatan'}
+                  </span>
                 </div>
               </div>
             </div>
@@ -418,10 +505,16 @@ export default function App() {
               {/* Desktop Live Sync Status Badge */}
               <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-100/80 rounded-xl border border-slate-200/80 text-xs">
                 {isOnline ? (
-                  hasSheetConfig ? (
+                  hasSupabaseConfig ? (
+                    <span className="flex items-center gap-1.5 text-emerald-700 font-bold">
+                      <Database className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>Supabase Cloud (Masa Nyata)</span>
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    </span>
+                  ) : hasSheetConfig ? (
                     <span className="flex items-center gap-1.5 text-emerald-700 font-semibold">
                       <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                      <span>{getLastSyncText()}</span>
+                      <span>Google Sheets ({getLastSyncText()})</span>
                     </span>
                   ) : (
                     <span className="flex items-center gap-1.5 text-slate-600 font-medium">
@@ -436,13 +529,13 @@ export default function App() {
                   </span>
                 )}
 
-                {hasSheetConfig && (
+                {(hasSupabaseConfig || hasSheetConfig) && (
                   <button
                     type="button"
                     onClick={() => syncWithCloud(false)}
                     disabled={isSyncing}
                     className="p-1 text-slate-500 hover:text-blue-600 rounded transition-colors"
-                    title="Segerak sekarang dengan Google Sheets"
+                    title="Segerak sekarang dengan pangkalan data"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
                   </button>
@@ -465,12 +558,12 @@ export default function App() {
                 type="button"
                 onClick={() => setIsAdminOpen(true)}
                 className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-3 sm:px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm rounded-xl shadow-sm transition-all active:scale-95 border border-slate-800"
-                title="Buka Panel Pentadbir: Jana PDF & Sambungan Google Sheets"
+                title="Buka Panel Pentadbir: Supabase, PDF & Tetapan"
               >
                 <Lock className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                 <span className="hidden sm:inline">Pentadbir</span>
                 <span className="sm:hidden">Admin</span>
-                {hasSheetConfig ? (
+                {(hasSupabaseConfig || hasSheetConfig) ? (
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
                 ) : (
                   <span className="w-2 h-2 rounded-full bg-amber-400 ml-0.5" />
