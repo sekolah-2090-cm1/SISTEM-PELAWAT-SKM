@@ -57,7 +57,6 @@ interface AdminModalProps {
   visitors: Visitor[];
   onGenerateReport: (config: ReportConfig) => void;
   onSyncComplete?: () => void;
-  onPurgeDuplicates?: () => void;
 }
 
 const STORAGE_KEY_ADMIN_PASS = 'admin_security_password';
@@ -68,8 +67,7 @@ export default function AdminModal({
   onClose, 
   visitors, 
   onGenerateReport,
-  onSyncComplete,
-  onPurgeDuplicates 
+  onSyncComplete 
 }: AdminModalProps) {
   // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -1367,35 +1365,6 @@ export default function AdminModal({
                     >
                       <Download className="w-4 h-4" />
                       Muat Turun Semua Rekod (CSV)
-                    </button>
-                  </div>
-                </div>
-
-                {/* Local Cache Cleanup & Deduplication */}
-                <div className="p-5 bg-amber-50/70 border border-amber-200/90 rounded-2xl space-y-3">
-                  <div className="flex items-center gap-3">
-                    <div className="p-3 bg-amber-100 text-amber-800 rounded-xl">
-                      <Sparkles className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-sm text-slate-800">Pembersihan Rekod Pendua &amp; Klon</h4>
-                      <p className="text-xs text-slate-600 font-medium">
-                        Jika paparan memaparkan angka tinggi atau klon rekod akibat percubaan segerak lama, klik butang ini untuk membersihkannya serta-merta.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (onPurgeDuplicates) onPurgeDuplicates();
-                        onClose();
-                      }}
-                      className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all"
-                    >
-                      <Sparkles className="w-4 h-4" />
-                      <span>Bersihkan Rekod Pendua Sekarang</span>
                     </button>
                   </div>
                 </div>

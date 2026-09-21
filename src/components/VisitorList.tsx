@@ -22,17 +22,55 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
     (v.purpose && v.purpose.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
-  const formatTime = (isoString: string) => {
-    return new Date(isoString).toLocaleTimeString('ms-MY', {
+  const parseSafeDate = (isoString?: string | null) => {
+    if (!isoString) return new Date();
+    const str = String(isoString).trim();
+    const direct = new Date(str);
+    if (!isNaN(direct.getTime())) return direct;
+
+    const match = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+|,\s*)?(\d{1,2})?:?(\d{1,2})?:?(\d{1,2})?/);
+    if (match) {
+      const day = parseInt(match[1], 10);
+      const month = parseInt(match[2], 10) - 1;
+      const year = parseInt(match[3], 10);
+      const h = match[4] ? parseInt(match[4], 10) : 0;
+      const m = match[5] ? parseInt(match[5], 10) : 0;
+      const s = match[6] ? parseInt(match[6], 10) : 0;
+      const parsed = new Date(year, month, day, h, m, s);
+      if (!isNaN(parsed.getTime())) return parsed;
+    }
+    return new Date();
+  };
+
+  const formatDateTime = (isoString: string) => {
+    const d = parseSafeDate(isoString);
+    const now = new Date();
+    const isToday =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+
+    const timeStr = d.toLocaleTimeString('ms-MY', {
       hour: '2-digit',
       minute: '2-digit',
       hour12: true
     });
+
+    if (isToday) {
+      return timeStr;
+    }
+
+    const dateStr = d.toLocaleDateString('ms-MY', {
+      day: '2-digit',
+      month: 'short'
+    });
+
+    return `${dateStr}, ${timeStr}`;
   };
 
   const calculateDuration = (checkInIso: string, checkOutIso?: string | null) => {
-    const start = new Date(checkInIso).getTime();
-    const end = checkOutIso ? new Date(checkOutIso).getTime() : Date.now();
+    const start = parseSafeDate(checkInIso).getTime();
+    const end = checkOutIso ? parseSafeDate(checkOutIso).getTime() : Date.now();
     const diffMins = Math.max(1, Math.round((end - start) / 60000));
     if (diffMins < 60) return `${diffMins} min`;
     const hours = Math.floor(diffMins / 60);
@@ -176,7 +214,7 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
                   <div className="flex items-center justify-between text-xs text-slate-500 mb-3.5">
                     <div className="flex items-center gap-1.5">
                       <Clock className="w-3.5 h-3.5 text-slate-400" />
-                      <span>Masuk: <strong className="text-slate-700 font-mono">{formatTime(visitor.checkInTime)}</strong></span>
+                      <span>Masuk: <strong className="text-slate-700 font-mono">{formatDateTime(visitor.checkInTime)}</strong></span>
                     </div>
 
                     <div>
@@ -186,7 +224,7 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
                         </span>
                       ) : (
                         <span className="text-slate-600 font-mono">
-                          Keluar: {visitor.checkOutTime ? formatTime(visitor.checkOutTime) : '-'}
+                          Keluar: {visitor.checkOutTime ? formatDateTime(visitor.checkOutTime) : '-'}
                         </span>
                       )}
                     </div>
@@ -242,7 +280,7 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
                 <tr>
                   <th className="px-4 sm:px-6 py-3.5">Nama &amp; Maklumat Pelawat</th>
                   <th className="px-4 sm:px-6 py-3.5">Tujuan Lawatan</th>
-                  <th className="px-4 sm:px-6 py-3.5">Masa Masuk</th>
+                  <th className="px-4 sm:px-6 py-3.5">Tarikh &amp; Masa Masuk</th>
                   <th className="px-4 sm:px-6 py-3.5">Status Kawasan</th>
                   {/* Sticky right column so actions are NEVER hidden on any laptop or small screen */}
                   <th className="px-4 sm:px-6 py-3.5 text-right sticky right-0 bg-slate-50/95 backdrop-blur-xs shadow-[-6px_0_10px_-4px_rgba(0,0,0,0.06)] z-20">
@@ -293,7 +331,7 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
                       <td className="px-4 sm:px-6 py-3.5">
                         <div className="flex items-center gap-2 text-slate-600 font-mono">
                           <Clock className="w-4 h-4 text-slate-400" />
-                          <span>{formatTime(visitor.checkInTime)}</span>
+                          <span>{formatDateTime(visitor.checkInTime)}</span>
                         </div>
                       </td>
                       <td className="px-4 sm:px-6 py-3.5">
@@ -305,7 +343,7 @@ export default function VisitorList({ visitors, onCheckOut, searchTerm, onSelect
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200 uppercase tracking-wider">
                             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                            Telah Keluar <span className="font-mono font-normal ml-1 text-slate-500">{visitor.checkOutTime && `(${formatTime(visitor.checkOutTime)})`}</span>
+                            Telah Keluar <span className="font-mono font-normal ml-1 text-slate-500">{visitor.checkOutTime && `(${formatDateTime(visitor.checkOutTime)})`}</span>
                           </span>
                         )}
                       </td>

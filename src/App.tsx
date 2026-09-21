@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   Users, 
   Search, 
   Clock as ClockIcon, 
+  Clock,
   Activity, 
   Download, 
   ClipboardList, 
@@ -97,6 +98,35 @@ function sanitizeVisitorsList(list: any[]): Visitor[] {
   return result;
 }
 
+export function parseVisitorDate(dateStr?: string | null): Date {
+  if (!dateStr) return new Date();
+  const str = String(dateStr).trim();
+  if (!str) return new Date();
+  const direct = new Date(str);
+  if (!isNaN(direct.getTime())) return direct;
+
+  const match = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+|,\s*)?(\d{1,2})?:?(\d{1,2})?:?(\d{1,2})?/);
+  if (match) {
+    const day = parseInt(match[1], 10);
+    const month = parseInt(match[2], 10) - 1;
+    const year = parseInt(match[3], 10);
+    const h = match[4] ? parseInt(match[4], 10) : 0;
+    const m = match[5] ? parseInt(match[5], 10) : 0;
+    const s = match[6] ? parseInt(match[6], 10) : 0;
+    const parsed = new Date(year, month, day, h, m, s);
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+  return new Date();
+}
+
+export function isSameDay(d1: Date, d2: Date): boolean {
+  return (
+    d1.getFullYear() === d2.getFullYear() &&
+    d1.getMonth() === d2.getMonth() &&
+    d1.getDate() === d2.getDate()
+  );
+}
+
 export default function App() {
   const [visitors, setVisitors] = useState<Visitor[]>([]);
   const visitorsRef = useRef<Visitor[]>(visitors);
@@ -115,7 +145,7 @@ export default function App() {
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [activeReportConfig, setActiveReportConfig] = useState<ReportConfig | null>(null);
-  const [cleanedDuplicatesCount, setCleanedDuplicatesCount] = useState<number>(0);
+  const [visitorFilter, setVisitorFilter] = useState<'all' | 'today' | 'active'>('all');
   
   // QR Scanner & Visitor Pass Modals
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -264,10 +294,6 @@ export default function App() {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
           const sanitized = sanitizeVisitorsList(parsed);
-          const diff = parsed.length - sanitized.length;
-          if (diff > 0) {
-            setCleanedDuplicatesCount(diff);
-          }
           setVisitors(sanitized);
           localStorage.setItem('school_visitors', JSON.stringify(sanitized));
         }
@@ -445,15 +471,28 @@ export default function App() {
     setIsPassModalOpen(true);
   };
 
-  // Compute stats for today
+  // Compute stats for today & all
   const now = new Date();
-  const todayStr = now.toLocaleDateString();
   
-  const visitorsToday = visitors.filter(
-    (v) => new Date(v.checkInTime).toLocaleDateString() === todayStr
-  );
-  const activeVisitors = visitorsToday.filter((v) => v.status === 'ACTIVE').length;
+  const visitorsToday = useMemo(() => {
+    return visitors.filter((v) => isSameDay(parseVisitorDate(v.checkInTime), now));
+  }, [visitors, now]);
+
+  const activeVisitors = useMemo(() => {
+    return visitors.filter((v) => v.status === 'ACTIVE').length;
+  }, [visitors]);
+
   const totalToday = visitorsToday.length;
+
+  const displayedVisitors = useMemo(() => {
+    if (visitorFilter === 'today') {
+      return visitorsToday;
+    }
+    if (visitorFilter === 'active') {
+      return visitors.filter((v) => v.status === 'ACTIVE');
+    }
+    return visitors;
+  }, [visitorFilter, visitors, visitorsToday]);
 
   // Analytics Stats
   const getWeekNumber = (d: Date) => {
@@ -464,28 +503,28 @@ export default function App() {
   };
 
   const totalThisWeek = visitors.filter(v => {
-    const date = new Date(v.checkInTime);
+    const date = parseVisitorDate(v.checkInTime);
     return getWeekNumber(date) === getWeekNumber(now) && date.getFullYear() === now.getFullYear();
   }).length;
 
   const totalThisMonth = visitors.filter(v => {
-    const date = new Date(v.checkInTime);
+    const date = parseVisitorDate(v.checkInTime);
     return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
   }).length;
 
   const totalThisYear = visitors.filter(v => {
-    const date = new Date(v.checkInTime);
+    const date = parseVisitorDate(v.checkInTime);
     return date.getFullYear() === now.getFullYear();
   }).length;
 
   const handleExportCSV = () => {
-    if (visitorsToday.length === 0) return;
+    if (displayedVisitors.length === 0) return;
 
     const headers = ['Nama Penuh', 'No. KP / Pasport', 'No. Telefon', 'No. Kenderaan', 'Tujuan', 'Masa Masuk', 'Masa Keluar', 'Status'];
     
     const csvContent = [
       headers.join(','),
-      ...visitorsToday.map(v => {
+      ...displayedVisitors.map(v => {
         return [
           `"${v.name}"`,
           `"${v.icOrPassport}"`,
@@ -504,20 +543,11 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     
     link.setAttribute('href', url);
-    link.setAttribute('download', `Laporan_Pelawat_${new Date().toLocaleDateString('ms-MY').replace(/\//g, '-')}.csv`);
+    link.setAttribute('download', `Laporan_Pelawat_${visitorFilter}_${new Date().toLocaleDateString('ms-MY').replace(/\//g, '-')}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
-
-  const handleManualDeduplicate = () => {
-    const cleaned = sanitizeVisitorsList(visitors);
-    const removedCount = visitors.length - cleaned.length;
-    setVisitors(cleaned);
-    localStorage.setItem('school_visitors', JSON.stringify(cleaned));
-    setCleanedDuplicatesCount(removedCount > 0 ? removedCount : 0);
-    syncWithCloud(false);
   };
 
   // Helper for formatted last sync text
@@ -786,18 +816,23 @@ export default function App() {
               {/* Responsive Quick Stats: 2 columns on Mobile, Tablets, and Desktops */}
               <div className="grid grid-cols-2 gap-3 sm:gap-4">
                 
-                {/* Total Today Card */}
+                {/* Total Visitors Card */}
                 <div className="bg-white/90 backdrop-blur-md p-4 sm:p-5 rounded-2xl shadow-xs border border-slate-200 flex items-center gap-3.5 sm:gap-5 hover:shadow-md transition-all">
                   <div className="bg-blue-50 p-2.5 sm:p-4 rounded-xl border border-blue-100 shrink-0">
                     <Users className="w-5 h-5 sm:w-7 sm:h-7 text-blue-600" />
                   </div>
                   <div className="min-w-0">
                     <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider truncate">
-                      Jumlah Hari Ini
+                      Jumlah Pelawat
                     </p>
-                    <h3 className="text-2xl sm:text-4xl font-black text-slate-900 font-mono">
-                      {totalToday}
-                    </h3>
+                    <div className="flex items-baseline gap-2">
+                      <h3 className="text-2xl sm:text-4xl font-black text-slate-900 font-mono">
+                        {visitors.length}
+                      </h3>
+                      <span className="text-[11px] text-slate-500 font-medium hidden sm:inline">
+                        ({totalToday} hari ini)
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -825,25 +860,67 @@ export default function App() {
 
               {/* Action and Search Bar */}
               <div className="flex flex-col">
-                <div className="bg-white/90 backdrop-blur-md p-4 sm:p-5 rounded-t-2xl shadow-xs border border-slate-200 border-b-0 flex flex-col md:flex-row justify-between items-stretch md:items-center gap-3">
+                <div className="bg-white/90 backdrop-blur-md p-4 sm:p-5 rounded-t-2xl shadow-xs border border-slate-200 border-b-0 flex flex-col gap-4">
                   
-                  {/* Title & Live Status */}
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-base sm:text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
-                      <span className="w-2 h-5 bg-blue-600 rounded-full"></span>
-                      <span>Senarai Pelawat Hari Ini</span>
-                    </h2>
+                  {/* Title & Filter Tabs */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-2.5 h-6 bg-blue-600 rounded-full shrink-0"></span>
+                      <div>
+                        <h2 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
+                          Senarai Pelawat Terkini
+                        </h2>
+                        <p className="text-[11px] text-slate-500 font-medium">
+                          {visitorFilter === 'all' && `Memaparkan semua ${visitors.length} rekod berdaftar`}
+                          {visitorFilter === 'today' && `Memaparkan pendaftaran hari ini (${totalToday} rekod)`}
+                          {visitorFilter === 'active' && `Memaparkan pelawat dalam kawasan (${activeVisitors} orang)`}
+                        </p>
+                      </div>
+                    </div>
 
-                    <span className="md:hidden text-xs text-slate-500 font-mono">
-                      {visitorsToday.length} rekod
-                    </span>
+                    {/* Filter Pills */}
+                    <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 self-start sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={() => setVisitorFilter('all')}
+                        className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all ${
+                          visitorFilter === 'all'
+                            ? 'bg-white text-blue-700 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+                        }`}
+                      >
+                        Semua ({visitors.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setVisitorFilter('today')}
+                        className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all ${
+                          visitorFilter === 'today'
+                            ? 'bg-white text-blue-700 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+                        }`}
+                      >
+                        Hari Ini ({totalToday})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setVisitorFilter('active')}
+                        className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all ${
+                          visitorFilter === 'active'
+                            ? 'bg-white text-amber-700 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+                        }`}
+                      >
+                        Dalam Kawasan ({activeVisitors})
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Controls: Search & Buttons */}
+                  {/* Controls: Search & Action Buttons */}
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
                     
                     {/* Search Field */}
-                    <div className="relative flex-1 sm:w-72">
+                    <div className="relative flex-1">
                       <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                         <Search className="h-4 w-4 text-slate-400" />
                       </div>
@@ -875,24 +952,13 @@ export default function App() {
                       <span>Imbas QR Keluar</span>
                     </button>
 
-                    {/* Bersihkan Rekod Pendua Button */}
-                    <button
-                      type="button"
-                      onClick={handleManualDeduplicate}
-                      className="min-h-[42px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-bold text-xs sm:text-sm rounded-xl shadow-xs transition-all active:scale-95 shrink-0"
-                      title="Singkirkan rekod pendua atau berulang dan selaraskan semula"
-                    >
-                      <Sparkles className="w-4 h-4 text-amber-500" />
-                      <span>Bersihkan Pendua</span>
-                    </button>
-
                     {/* CSV Export Button */}
                     <button
                       type="button"
                       onClick={handleExportCSV}
-                      disabled={visitorsToday.length === 0}
+                      disabled={displayedVisitors.length === 0}
                       className={`min-h-[42px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl transition-all border text-xs sm:text-sm font-bold shrink-0 ${
-                        visitorsToday.length === 0 
+                        displayedVisitors.length === 0 
                           ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' 
                           : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200 active:scale-95'
                       }`}
@@ -905,22 +971,21 @@ export default function App() {
 
                 </div>
 
-                {/* Banner when duplicates are purged */}
-                {cleanedDuplicatesCount > 0 && (
-                  <div className="bg-emerald-50 border-x border-b border-emerald-200 px-4 py-2.5 flex items-center justify-between text-xs text-emerald-800 font-medium">
+                {/* Helpful prompt when Today tab is selected but today has 0 entries while total visitors > 0 */}
+                {visitorFilter === 'today' && visitorsToday.length === 0 && visitors.length > 0 && (
+                  <div className="bg-blue-50 border-x border-b border-blue-200 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs text-blue-900 font-medium">
                     <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <Clock className="w-4 h-4 text-blue-600 shrink-0" />
                       <span>
-                        Sistem telah berjaya membersihkan <strong>{cleanedDuplicatesCount} rekod pendua</strong>. Data kini teratur dan tepat mengikut senarai sebenar.
+                        Tiada pendaftaran baru hari ini ({now.toLocaleDateString('ms-MY', { day: 'numeric', month: 'long', year: 'numeric' })}). Terdapat <strong>{visitors.length} rekod pelawat</strong> dalam pangkalan data.
                       </span>
                     </div>
                     <button
                       type="button"
-                      onClick={() => setCleanedDuplicatesCount(0)}
-                      className="text-emerald-700 hover:text-emerald-900 font-bold ml-2 p-1"
-                      title="Tutup makluman"
+                      onClick={() => setVisitorFilter('all')}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-all active:scale-95 shadow-xs"
                     >
-                      <X className="w-3.5 h-3.5" />
+                      Papar Semua ({visitors.length} Rekod)
                     </button>
                   </div>
                 )}
@@ -928,7 +993,7 @@ export default function App() {
                 {/* Visitor List Component (Responsive Card + Table Views) */}
                 <div className="flex-1 min-h-[450px]">
                   <VisitorList
-                    visitors={visitorsToday}
+                    visitors={displayedVisitors}
                     onCheckOut={handleCheckOut}
                     searchTerm={searchTerm}
                     onSelectVisitor={setSelectedVisitor}
@@ -971,7 +1036,9 @@ export default function App() {
                 <div className="bg-white/90 backdrop-blur-md p-4 sm:p-6 rounded-2xl shadow-xs border border-slate-200 flex flex-col justify-center items-center text-center">
                   <div className="text-slate-500 font-bold uppercase tracking-wider text-[11px] sm:text-xs">Hari Ini</div>
                   <div className="text-3xl sm:text-5xl font-black text-slate-900 font-mono mt-1">{totalToday}</div>
-                  <div className="text-[10px] text-slate-500 mt-1.5 font-medium bg-slate-100 px-2.5 py-0.5 rounded-full">{todayStr}</div>
+                  <div className="text-[10px] text-slate-500 mt-1.5 font-medium bg-slate-100 px-2.5 py-0.5 rounded-full">
+                    {now.toLocaleDateString('ms-MY', { day: 'numeric', month: 'short' })}
+                  </div>
                 </div>
 
                 {/* Minggu Ini */}
@@ -1070,7 +1137,6 @@ export default function App() {
         visitors={visitors}
         onGenerateReport={(config) => setActiveReportConfig(config)}
         onSyncComplete={() => syncWithCloud(false)}
-        onPurgeDuplicates={handleManualDeduplicate}
       />
 
       {/* Printable PDF Report View */}
