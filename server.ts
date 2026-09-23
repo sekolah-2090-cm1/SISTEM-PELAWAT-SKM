@@ -87,8 +87,42 @@ app.post("/api/config", (req, res) => {
 });
 
 // ==========================================
-// 3. API: PROXY TO GOOGLE APPS SCRIPT (CORS-FREE)
+// 3. API: PROXY TO GOOGLE APPS SCRIPT (CORS-FREE & RESILIENT)
 // ==========================================
+
+let cachedSheetVisitors: any[] = [];
+let lastSheetFetchTimestamp = 0;
+let inFlightSheetFetch: Promise<any[]> | null = null;
+const SHEET_CACHE_TTL_MS = 20000; // 20s cache window to avoid slamming Apps Script
+
+async function queryGoogleAppsScript(apiUrl: string): Promise<any[]> {
+  const fetchUrl = `${apiUrl}?t=${Date.now()}`;
+  const controller = new AbortController();
+  // 30 seconds timeout to accommodate Google Apps Script cold-starts
+  const timeout = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    const sheetResponse = await fetch(fetchUrl, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+
+    if (!sheetResponse.ok) {
+      throw new Error(`Google Sheets responded with HTTP status ${sheetResponse.status}`);
+    }
+
+    const data = await sheetResponse.json();
+    if (Array.isArray(data)) {
+      cachedSheetVisitors = data;
+      lastSheetFetchTimestamp = Date.now();
+      return data;
+    }
+    return cachedSheetVisitors;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 // GET all visitors through server (bypasses all mobile browser CORS & 302 restrictions)
 app.get("/api/sheet/visitors", async (_req, res) => {
@@ -99,27 +133,38 @@ app.get("/api/sheet/visitors", async (_req, res) => {
     return res.status(400).json({ error: "Google Apps Script URL belum disetkan dalam sistem." });
   }
 
+  // 1. Serve fresh cache if within TTL
+  const now = Date.now();
+  if (cachedSheetVisitors.length > 0 && now - lastSheetFetchTimestamp < SHEET_CACHE_TTL_MS) {
+    return res.json(cachedSheetVisitors);
+  }
+
+  // 2. Coalesce in-flight requests (prevent duplicate concurrent calls to Apps Script)
+  if (!inFlightSheetFetch) {
+    inFlightSheetFetch = queryGoogleAppsScript(apiUrl)
+      .finally(() => {
+        inFlightSheetFetch = null;
+      });
+  }
+
   try {
-    const fetchUrl = `${apiUrl}?t=${Date.now()}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
-
-    const sheetResponse = await fetch(fetchUrl, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-
-    if (!sheetResponse.ok) {
-      return res.status(sheetResponse.status).json({ error: "Google Sheets membalas dengan status ralat." });
-    }
-
-    const data = await sheetResponse.json();
+    const data = await inFlightSheetFetch;
     return res.json(data);
   } catch (err: any) {
-    console.warn("Server proxy fetch to Google Sheet failed:", err?.message || err);
-    return res.status(502).json({ error: "Gagal berhubung dengan Google Sheets.", details: err?.message });
+    // 3. Resilient fallback: if fetch timed out or aborted, return cached data if available
+    if (cachedSheetVisitors.length > 0) {
+      console.info("Returning cached Google Sheet records due to temporary upstream delay:", err?.message || err);
+      return res.json(cachedSheetVisitors);
+    }
+
+    const isAbort = err?.name === "AbortError" || String(err?.message).includes("aborted");
+    if (!isAbort) {
+      console.warn("Server proxy fetch to Google Sheet failed:", err?.message || err);
+    }
+    return res.status(502).json({
+      error: "Gagal berhubung dengan Google Sheets.",
+      details: isAbort ? "Google Apps Script mengambil masa terlalu lama untuk membalas." : err?.message
+    });
   }
 });
 
@@ -134,6 +179,14 @@ app.post("/api/sheet/visitors", async (req, res) => {
 
   const visitor = req.body;
   try {
+    // Optimistically update server cache
+    if (visitor && visitor.name) {
+      const exists = cachedSheetVisitors.some((v) => String(v.id) === String(visitor.id));
+      if (!exists) {
+        cachedSheetVisitors.push(visitor);
+      }
+    }
+
     const params = new URLSearchParams();
     params.set("action", "ADD");
     params.set("id", String(visitor.id || ""));
@@ -151,13 +204,14 @@ app.post("/api/sheet/visitors", async (req, res) => {
     const queryString = params.toString();
     const targetUrl = apiUrl.includes("?") ? `${apiUrl}&${queryString}` : `${apiUrl}?${queryString}`;
 
-    // Send multi-channel GET & POST from Node.js (immune to browser CORS drops)
-    fetch(targetUrl, { method: "GET" }).catch((e) => console.warn("Relay GET warning:", e));
+    // Send multi-channel GET & POST from Node.js with safe timeouts
+    fetch(targetUrl, { method: "GET", signal: AbortSignal.timeout(25000) }).catch(() => {});
     fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: queryString,
-    }).catch((e) => console.warn("Relay POST warning:", e));
+      signal: AbortSignal.timeout(25000),
+    }).catch(() => {});
 
     return res.json({ success: true });
   } catch (err: any) {
@@ -176,6 +230,15 @@ app.post("/api/sheet/checkout", async (req, res) => {
 
   const { id, checkOutTime } = req.body;
   try {
+    // Optimistically update server cache
+    if (id) {
+      cachedSheetVisitors = cachedSheetVisitors.map((v) =>
+        String(v.id) === String(id)
+          ? { ...v, status: "CHECKED_OUT", checkOutTime: checkOutTime || new Date().toISOString() }
+          : v
+      );
+    }
+
     const params = new URLSearchParams();
     params.set("action", "CHECK_OUT");
     params.set("id", String(id || ""));
@@ -185,12 +248,13 @@ app.post("/api/sheet/checkout", async (req, res) => {
     const queryString = params.toString();
     const targetUrl = apiUrl.includes("?") ? `${apiUrl}&${queryString}` : `${apiUrl}?${queryString}`;
 
-    fetch(targetUrl, { method: "GET" }).catch((e) => console.warn("Relay Checkout GET warning:", e));
+    fetch(targetUrl, { method: "GET", signal: AbortSignal.timeout(25000) }).catch(() => {});
     fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: queryString,
-    }).catch((e) => console.warn("Relay Checkout POST warning:", e));
+      signal: AbortSignal.timeout(25000),
+    }).catch(() => {});
 
     return res.json({ success: true });
   } catch (err: any) {

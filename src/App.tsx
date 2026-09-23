@@ -165,6 +165,7 @@ export default function App() {
 
   // Multi-device Cloud Sync Engine (Supabase Real-Time + Google Sheets)
   const isAutoUploadingToSupabase = useRef(false);
+  const lastSheetCrossSyncRef = useRef<number>(0);
 
   const syncWithCloud = useCallback(async (silent = false) => {
     const isSupabase = isSupabaseConfigured();
@@ -183,8 +184,10 @@ export default function App() {
       if (isSupabase) {
         cloudVisitors = await fetchVisitorsFromSupabase();
 
-        // Also check if Google Sheets has distinct records not yet in Supabase
-        if (isSheet) {
+        // Check if Google Sheets has distinct records not yet in Supabase (throttled to avoid request flooding)
+        const shouldCheckSheet = isSheet && (!silent || Date.now() - lastSheetCrossSyncRef.current > 120000);
+        if (shouldCheckSheet) {
+          lastSheetCrossSyncRef.current = Date.now();
           try {
             const sheetVisitors = await fetchVisitorsFromSheet();
             if (sheetVisitors && sheetVisitors.length > 0) {
@@ -328,10 +331,10 @@ export default function App() {
 
   // 4. Real-Time Multi-Device Sync Listeners (Polling & Focus triggers)
   useEffect(() => {
-    // A. Background fallback polling every 12 seconds
+    // A. Background fallback polling every 25 seconds
     const pollTimer = setInterval(() => {
       syncWithCloud(true);
-    }, 12000);
+    }, 25000);
 
     // B. Re-sync when user returns to the tab or unlocks their smartphone
     const handleVisibility = () => {

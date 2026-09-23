@@ -163,54 +163,66 @@ function parseVisitorRows(data: any[]): Visitor[] {
   return result;
 }
 
+let inFlightClientSheetFetch: Promise<Visitor[] | null> | null = null;
+
 /**
  * Fetch all visitors from Google Sheets (Centralized server proxy with direct fallback)
  */
 export async function fetchVisitorsFromSheet(): Promise<Visitor[] | null> {
-  // Method 1: Try server-side proxy first (100% bypasses mobile browser CORS & 302 redirects)
-  try {
-    const proxyRes = await fetch('/api/sheet/visitors');
-    if (proxyRes.ok) {
-      const data = await proxyRes.json();
-      if (Array.isArray(data)) {
-        return parseVisitorRows(data);
+  if (inFlightClientSheetFetch) {
+    return inFlightClientSheetFetch;
+  }
+
+  inFlightClientSheetFetch = (async () => {
+    // Method 1: Try server-side proxy first (100% bypasses mobile browser CORS & 302 redirects)
+    try {
+      const proxyRes = await fetch('/api/sheet/visitors');
+      if (proxyRes.ok) {
+        const data = await proxyRes.json();
+        if (Array.isArray(data)) {
+          return parseVisitorRows(data);
+        }
       }
+    } catch {
+      // Server proxy offline or network error, proceed to direct client fetch
     }
-  } catch {
-    // Server proxy offline or error, proceed to direct client fetch
-  }
 
-  // Method 2: Direct client fetch
-  const apiUrl = getGoogleSheetApiUrl();
-  if (!apiUrl) return null;
+    // Method 2: Direct client fetch
+    const apiUrl = getGoogleSheetApiUrl();
+    if (!apiUrl) return null;
 
-  const validation = isValidGoogleAppsScriptUrl(apiUrl);
-  if (!validation.valid) {
-    return null;
-  }
-
-  try {
-    const fetchUrl = `${apiUrl}?t=${Date.now()}`;
-    const response = await fetch(fetchUrl, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
-    });
-
-    if (!response.ok) {
+    const validation = isValidGoogleAppsScriptUrl(apiUrl);
+    if (!validation.valid) {
       return null;
     }
 
-    const data = await response.json();
-    if (Array.isArray(data)) {
-      return parseVisitorRows(data);
+    try {
+      const fetchUrl = `${apiUrl}?t=${Date.now()}`;
+      const response = await fetch(fetchUrl, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const data = await response.json();
+      if (Array.isArray(data)) {
+        return parseVisitorRows(data);
+      }
+      return null;
+    } catch (error) {
+      console.warn('Gagal memuat turun data dari Google Sheets:', error);
+      return null;
     }
-    return null;
-  } catch (error) {
-    console.warn('Gagal memuat turun data dari Google Sheets:', error);
-    return null;
-  }
+  })().finally(() => {
+    inFlightClientSheetFetch = null;
+  });
+
+  return inFlightClientSheetFetch;
 }
 
 /**
